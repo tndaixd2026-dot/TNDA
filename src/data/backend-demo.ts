@@ -7,7 +7,7 @@ import type { Backend, Snapshot } from './backend.ts';
 import { DEMO_SETTINGS, demoChannels, demoPosts } from './seed.ts';
 
 const KEY = 'tnda-relay:demo';
-const VERSION = 2;
+const VERSION = 3;
 
 interface DemoState {
   version: number;

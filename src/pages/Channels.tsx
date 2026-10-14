@@ -199,7 +199,7 @@ function ImportModal({ onClose }: { onClose: () => void }) {
         class="textarea mono"
         rows={9}
         style={{ fontSize: 13, marginTop: 8 }}
-        placeholder={'【B｜三-VSAI 互動機台】\n課程公告\nhttps://discord.com/api/webhooks/…\n課後作業\nhttps://discord.com/api/webhooks/…'}
+        placeholder={'【B｜課程名稱】\n課程公告\nhttps://discord.com/api/webhooks/…\n課後作業\nhttps://discord.com/api/webhooks/…'}
         value={text}
         onInput={(e) => setText((e.currentTarget as HTMLTextAreaElement).value)}
       />

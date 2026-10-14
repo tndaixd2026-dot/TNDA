@@ -3,31 +3,6 @@
 import type { Audience, Channel, ChannelKind, PostType } from './types.ts';
 import { parseWebhook } from './discord.ts';
 
-/** 預設頻道（不含 Webhook 網址；網址只會加密後存在資料分支）。 */
-export const DEFAULT_CHANNELS: Channel[] = [
-  ch('a-announce', 'A', '互動學程大群組', '公告欄', 'student', 'announce'),
-  ch('a-chat', 'A', '互動學程大群組', '交流區', 'student', 'chat'),
-  ch('b-announce', 'B', '三-VSAI 互動機台', '課程公告', 'student', 'announce'),
-  ch('b-homework', 'B', '三-VSAI 互動機台', '課後作業', 'student', 'homework'),
-  ch('b-makeup', 'B', '三-VSAI 互動機台', '補課資訊', 'student', 'makeup'),
-  ch('b-form', 'B', '三-VSAI 互動機台', '課後表單', 'student', 'form'),
-  ch('b-resource', 'B', '三-VSAI 互動機台', '學習資源', 'student', 'resource'),
-  ch('b-discuss', 'B', '三-VSAI 互動機台', '討論室', 'student', 'discuss'),
-  ch('c-announce', 'C', '四-跨域數位製作 TN0006', '課程公告', 'student', 'announce'),
-  ch('c-homework', 'C', '四-跨域數位製作 TN0006', '課後作業', 'student', 'homework'),
-  ch('c-makeup', 'C', '四-跨域數位製作 TN0006', '補課資訊', 'student', 'makeup'),
-  ch('c-form', 'C', '四-跨域數位製作 TN0006', '課後表單', 'student', 'form'),
-  ch('c-resource', 'C', '四-跨域數位製作 TN0006', '學習資源', 'student', 'resource'),
-  ch('c-discuss', 'C', '四-跨域數位製作 TN0006', '討論室', 'student', 'discuss'),
-  ch('d-mentor', 'D', '業師群組（非學員）', '業師群組', 'staff', 'staff'),
-  ch('d-assistant', 'D', '業師群組（非學員）', '助理群組', 'staff', 'staff'),
-  ch('test', 'T', '測試區', '測試區', 'test', 'test'),
-];
-
-function ch(id: string, group: string, groupName: string, name: string, audience: Audience, kind: ChannelKind): Channel {
-  return { id, group, groupName, name, audience, kind };
-}
-
 export function guessKind(name: string, groupName = ''): ChannelKind {
   const s = `${groupName} ${name}`;
   if (/測試|test/i.test(name) || /測試/.test(groupName)) return 'test';
@@ -59,13 +34,14 @@ const URL_RE = /https?:\/\/\S+/;
 /**
  * 解析一段「群組標題 / 頻道名稱 / Webhook 網址」的文字，例如：
  *
- * 【B｜三-VSAI 互動機台】
+ * 【B｜三-互動設計實作】
  * 課程公告
  * https://discord.com/api/webhooks/...
  *
- * 會盡量對應到預設頻道的 id，讓既有貼文的頻道設定不會跑掉。
+ * 會對應到既有頻道的 id（同群組、同名稱），讓既有貼文的頻道設定不會跑掉。
+ * 群組與頻道名稱只來自使用者貼上的清單，程式碼裡不內建任何名稱。
  */
-export function parseWebhookBlock(text: string, existing: Channel[] = DEFAULT_CHANNELS): ImportResult {
+export function parseWebhookBlock(text: string, existing: Channel[] = []): ImportResult {
   const warnings: string[] = [];
   const channels: Channel[] = [];
   let group = { code: '', name: '' };
@@ -107,8 +83,11 @@ export function parseWebhookBlock(text: string, existing: Channel[] = DEFAULT_CH
     const match = existing.find(
       (c) => (c.group === code || c.groupName === groupName) && c.name === name && !usedIds.has(c.id),
     );
-    let id = match?.id ?? `${code.toLowerCase()}-${slug(name)}`;
-    while (usedIds.has(id)) id = `${id}-2`;
+    const kind = match?.kind ?? guessKind(name, groupName);
+    // 新頻道的 id 用「群組代碼-用途」，例如 b-homework；重複時加上序號
+    const base = `${code.toLowerCase()}-${kind !== 'other' ? kind : slug(name)}`;
+    let id = match?.id ?? base;
+    for (let n = 2; usedIds.has(id) || (!match && existing.some((c) => c.id === id)); n++) id = `${base}-${n}`;
     usedIds.add(id);
     channels.push({
       id,
@@ -116,7 +95,7 @@ export function parseWebhookBlock(text: string, existing: Channel[] = DEFAULT_CH
       group: code,
       groupName,
       audience: match?.audience ?? guessAudience(name, groupName),
-      kind: match?.kind ?? guessKind(name, groupName),
+      kind,
       webhook: url,
     });
   }
@@ -196,18 +175,35 @@ export function matchingChannels(type: PostType, channels: Channel[]): string[] 
   return channels.filter((c) => c.audience === 'student' && KIND_FOR_TYPE[type].includes(c.kind)).map((c) => c.id);
 }
 
-/** 從文字判斷是哪一門課（對應群組代碼）。 */
-export function detectCourse(text: string, channels: Channel[]): string | undefined {
-  const rules: Array<[RegExp, (c: Channel) => boolean]> = [
-    [/VSAI|互動機台|機台/i, (c) => /VSAI|互動機台/i.test(c.groupName)],
-    [/TN0006|跨域|數位製作/i, (c) => /TN0006|跨域|數位製作/i.test(c.groupName)],
-    [/業師|講師會議|助理/, (c) => c.audience === 'staff'],
-  ];
-  for (const [re, pick] of rules) {
-    if (re.test(text)) {
-      const hit = channels.find(pick);
-      if (hit) return hit.group;
+const STOP_WORDS = /群組|大群|頻道|測試|^課程$|^學程$|^班級$/;
+
+/** 從群組名稱取出可以用來辨識課程的關鍵字，例如「三-互動設計實作 ID101」→ 互動設計實作、互動設計、設計實作、ID101 */
+export function groupKeywords(groupName: string): string[] {
+  const base = groupName
+    .replace(/[（(][^）)]*[）)]/g, ' ')
+    .replace(/^\s*[一二三四五六七八九十日\d]{1,2}\s*[-－—–、.．]\s*/, '');
+  const out = new Set<string>();
+  for (const part of base.split(/[\s｜|/／、,，·・\-－—–]+/).filter(Boolean)) {
+    out.add(part);
+    for (const run of part.match(/\p{Script=Han}{5,}/gu) ?? []) {
+      out.add(run.slice(0, 4));
+      out.add(run.slice(-4));
     }
   }
+  return [...out].filter((k) => k.length >= 2 && !STOP_WORDS.test(k) && !/^(週|周|星期|禮拜)?[一二三四五六日天]$/.test(k));
+}
+
+/** 從文字判斷是哪一門課（對應群組代碼）：比對匯入的群組名稱，取最長的相符關鍵字。 */
+export function detectCourse(text: string, channels: Channel[]): string | undefined {
+  const lower = text.toLowerCase();
+  let best: { group: string; len: number } | undefined;
+  for (const g of groupChannels(channels)) {
+    if (g.audience === 'test') continue;
+    for (const k of groupKeywords(g.name)) {
+      if (lower.includes(k.toLowerCase()) && (!best || k.length > best.len)) best = { group: g.code, len: k.length };
+    }
+  }
+  if (best) return best.group;
+  if (/業師|講師會議|助理/.test(text)) return channels.find((c) => c.audience === 'staff')?.group;
   return undefined;
 }

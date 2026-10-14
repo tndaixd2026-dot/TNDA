@@ -12,9 +12,9 @@ const T0 = new Date('2026-10-14T12:00:00Z');
 
 function channels(): Channel[] {
   return [
-    { id: 'b-homework', name: '課後作業', group: 'B', groupName: 'VSAI', audience: 'student', kind: 'homework', webhook: webhook(1) },
-    { id: 'c-homework', name: '課後作業', group: 'C', groupName: 'TN0006', audience: 'student', kind: 'homework', webhook: webhook(2) },
-    { id: 'no-hook', name: '沒設定', group: 'C', groupName: 'TN0006', audience: 'student', kind: 'other' },
+    { id: 'b-homework', name: '課後作業', group: 'B', groupName: '三-互動設計實作', audience: 'student', kind: 'homework', webhook: webhook(1) },
+    { id: 'c-homework', name: '課後作業', group: 'C', groupName: '四-數位內容製作', audience: 'student', kind: 'homework', webhook: webhook(2) },
+    { id: 'no-hook', name: '沒設定', group: 'C', groupName: '四-數位內容製作', audience: 'student', kind: 'other' },
   ];
 }
 

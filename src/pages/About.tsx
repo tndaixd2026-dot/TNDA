@@ -44,7 +44,7 @@ export function About() {
               { x: 10, title: '瀏覽器', lines: ['貼上 → 智慧整理', 'Discord 預覽', 'AES-256 加密'], icon: '①' },
               { x: 245, title: 'GitHub repo', lines: ['tnda-data 分支', '每則貼文一個加密檔', '版本比對防衝突'], icon: '②' },
               { x: 480, title: 'GitHub Actions', lines: ['每 5 分鐘執行', '解密、找出到期貼文', '認領 → 發送 → 記錄'], icon: '③' },
-              { x: 715, title: 'Discord', lines: ['17 個聊天室', 'Webhook 發文', '時間戳即時倒數'], icon: '④' },
+              { x: 715, title: 'Discord', lines: ['各課程聊天室', 'Webhook 發文', '時間戳即時倒數'], icon: '④' },
             ].map((b) => (
               <g key={b.title}>
                 <rect x={b.x} y="40" width="175" height="150" rx="14" fill="var(--surface-2)" stroke="var(--line-strong)" />

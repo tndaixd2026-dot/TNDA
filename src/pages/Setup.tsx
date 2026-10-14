@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'preact/hooks';
 import type { Channel } from '../core/types.ts';
 import { generateSyncKey, normalizeSyncKey } from '../core/crypto.ts';
-import { DEFAULT_CHANNELS, mergeChannels, parseWebhookBlock } from '../core/channels.ts';
+import { mergeChannels, parseWebhookBlock } from '../core/channels.ts';
 import { GitHubDataRepo, SECRET_NAME } from '../core/repo.ts';
 import { executeWebhook } from '../core/discord.ts';
 import { backToWelcome, connectGitHub, updateConfig, useApp } from '../data/store.ts';
@@ -36,7 +36,7 @@ export function Setup() {
   const [secretState, setSecretState] = useState<'ok' | 'manual' | null>(null);
   const [syncKey, setSyncKey] = useState('');
   const [importText, setImportText] = useState('');
-  const [channels, setChannels] = useState<Channel[]>(DEFAULT_CHANNELS);
+  const [channels, setChannels] = useState<Channel[]>([]);
   const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
   const client = useMemo(() => makeClient(owner, repo, token), [owner, repo, token]);
   const idx = STEPS.findIndex(([s]) => s === step);
@@ -192,7 +192,7 @@ export function Setup() {
               disabled={!saved}
               onClick={() =>
                 guard(async () => {
-                  await createDataSpace(client, newKey, DEFAULT_CHANNELS, config.branch);
+                  await createDataSpace(client, newKey, [], config.branch);
                   setSyncKey(newKey);
                   try {
                     await storeSyncKeySecret(client, newKey);
@@ -250,7 +250,7 @@ export function Setup() {
             class="textarea mono"
             rows={10}
             style={{ fontSize: 13 }}
-            placeholder={'【A｜互動學程大群組】\n公告欄\nhttps://discord.com/api/webhooks/…\n\n【測試區】\nhttps://discord.com/api/webhooks/…'}
+            placeholder={'【A｜大群組名稱】\n公告\nhttps://discord.com/api/webhooks/…\n\n【測試區】\nhttps://discord.com/api/webhooks/…'}
             value={importText}
             onInput={(e) => setImportText((e.currentTarget as HTMLTextAreaElement).value)}
           />

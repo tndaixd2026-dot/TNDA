@@ -167,8 +167,8 @@ describe('相對日期改寫', () => {
 
 describe('標題與內文', () => {
   it('【】標題', () => {
-    const r = p('【VSAI 第六週上課提醒】\n明天 19:00 上課');
-    expect(r.title).toBe('VSAI 第六週上課提醒');
+    const r = p('【互動設計 第六週上課提醒】\n明天 19:00 上課');
+    expect(r.title).toBe('互動設計 第六週上課提醒');
     expect(r.body).toBe('10/15（四） 19:00 上課');
   });
   it('短的第一行當標題', () => {

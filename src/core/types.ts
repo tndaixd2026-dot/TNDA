@@ -156,6 +156,6 @@ export interface RepoMeta {
 export const DEFAULT_SETTINGS: Settings = {
   senderName: 'TNDA 課務小幫手',
   avatarUrl: '',
-  footer: 'TNDA 互動學程',
+  footer: '',
   defaultMention: 'none',
 };

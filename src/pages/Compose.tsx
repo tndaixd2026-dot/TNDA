@@ -17,17 +17,17 @@ const TEMPLATES: Array<{ type: PostType; label: string; text: string }> = [
   {
     type: 'class',
     label: '上課提醒',
-    text: '【VSAI 上課提醒】\n下週三 18:30-21:30 上課\n地點：數位創新基地 3F 互動實驗室\n請攜帶 筆電、Arduino 套件\n本週會做感測器實作，上課前請先看學習資源區的影片。',
+    text: '【互動設計 上課提醒】\n下週三 18:30-21:30 上課\n地點：3F 301 教室\n請攜帶 筆電、Arduino 套件\n本週會做感測器實作，上課前請先看學習資源區的影片。',
   },
   {
     type: 'homework',
     label: '作業提醒',
-    text: 'VSAI 作業二：互動原型影片\n請在下週二 23:59 前上傳到 https://drive.google.com/drive/folders/your-folder\n- 影片 30 秒內\n- 檔名：學號_姓名_作業二',
+    text: '互動設計 作業二：互動原型影片\n請在下週二 23:59 前上傳到 https://drive.google.com/drive/folders/your-folder\n- 影片 30 秒內\n- 檔名：學號_姓名_作業二',
   },
   {
     type: 'makeup',
     label: '補課資訊',
-    text: 'TN0006 補課通知\n原本這週四的課因颱風停課，改到下週六下午 1:30～4:30 補課，地點不變：數位創新基地 2F 製作教室。',
+    text: '數位內容 補課通知\n原本這週四的課因颱風停課，改到下週六下午 1:30～4:30 補課，地點不變：2F 202 教室。',
   },
   {
     type: 'form',
@@ -37,7 +37,7 @@ const TEMPLATES: Array<{ type: PostType; label: string; text: string }> = [
   {
     type: 'resource',
     label: '學習資源',
-    text: 'TN0006 第五週簡報與錄影\n簡報：https://docs.google.com/presentation/d/your-slides\n錄影：https://youtu.be/your-video\n沒來的同學記得補看！',
+    text: '數位內容 第五週簡報與錄影\n簡報：https://docs.google.com/presentation/d/your-slides\n錄影：https://youtu.be/your-video\n沒來的同學記得補看！',
   },
   {
     type: 'announce',

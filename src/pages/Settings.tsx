@@ -64,7 +64,7 @@ export function SettingsPage() {
           </div>
           <div class="field">
             <label for="s-footer">卡片頁尾</label>
-            <input id="s-footer" class="input" value={form.footer} placeholder="例如：TNDA 互動學程｜有問題請在討論室發問" onInput={(e) => setForm({ ...form, footer: (e.currentTarget as HTMLInputElement).value })} />
+            <input id="s-footer" class="input" value={form.footer} placeholder="例如：有問題請在討論室發問" onInput={(e) => setForm({ ...form, footer: (e.currentTarget as HTMLInputElement).value })} />
           </div>
           <div class="field">
             <span class="label">預設標註</span>

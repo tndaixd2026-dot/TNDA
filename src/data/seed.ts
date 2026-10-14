@@ -1,9 +1,8 @@
 // Demo 範例資料：以「現在」為基準，產生過去幾週的發文紀錄與接下來的排程。
 // 內容是示範用的範例，不是真實公告。
 
-import type { Channel, ComposeDraft, Post, PostType, Settings } from '../core/types.ts';
+import type { Audience, Channel, ChannelKind, ComposeDraft, Post, PostType, Settings } from '../core/types.ts';
 import { DEFAULT_SETTINGS } from '../core/types.ts';
-import { DEFAULT_CHANNELS } from '../core/channels.ts';
 import { DAY_MS, atTime, tpParts } from '../core/time.ts';
 import { composePayload } from '../format/composer.ts';
 import { randomId } from '../core/crypto.ts';
@@ -11,13 +10,39 @@ import { randomId } from '../core/crypto.ts';
 export const DEMO_SETTINGS: Settings = {
   ...DEFAULT_SETTINGS,
   senderName: 'TNDA 課務小幫手',
-  footer: 'TNDA 互動學程｜有問題請在討論室發問',
+  footer: 'TNDA｜有問題請在討論室發問',
 };
 
+// 示範用的虛構群組與頻道（正式使用時，名稱來自你匯入的 Webhook 清單）
+const DEMO_CHANNELS: Array<[string, string, string, string, Audience, ChannelKind]> = [
+  ['a-announce', 'A', '學程大群組', '公告欄', 'student', 'announce'],
+  ['a-chat', 'A', '學程大群組', '交流區', 'student', 'chat'],
+  ['b-announce', 'B', '三-互動設計實作', '課程公告', 'student', 'announce'],
+  ['b-homework', 'B', '三-互動設計實作', '課後作業', 'student', 'homework'],
+  ['b-makeup', 'B', '三-互動設計實作', '補課資訊', 'student', 'makeup'],
+  ['b-form', 'B', '三-互動設計實作', '課後表單', 'student', 'form'],
+  ['b-resource', 'B', '三-互動設計實作', '學習資源', 'student', 'resource'],
+  ['b-discuss', 'B', '三-互動設計實作', '討論室', 'student', 'discuss'],
+  ['c-announce', 'C', '四-數位內容製作 DC101', '課程公告', 'student', 'announce'],
+  ['c-homework', 'C', '四-數位內容製作 DC101', '課後作業', 'student', 'homework'],
+  ['c-makeup', 'C', '四-數位內容製作 DC101', '補課資訊', 'student', 'makeup'],
+  ['c-form', 'C', '四-數位內容製作 DC101', '課後表單', 'student', 'form'],
+  ['c-resource', 'C', '四-數位內容製作 DC101', '學習資源', 'student', 'resource'],
+  ['c-discuss', 'C', '四-數位內容製作 DC101', '討論室', 'student', 'discuss'],
+  ['d-mentor', 'D', '講師與助理（非學員）', '講師群組', 'staff', 'staff'],
+  ['d-assistant', 'D', '講師與助理（非學員）', '助理群組', 'staff', 'staff'],
+  ['test', 'T', '測試區', '測試區', 'test', 'test'],
+];
+
 export function demoChannels(): Channel[] {
-  return DEFAULT_CHANNELS.map((c, i) => ({
-    ...c,
-    webhook: `https://discord.com/api/webhooks/1000000000000000${String(i + 10).padStart(2, '0')}/demo-${c.id}-token-not-real-0000000000`,
+  return DEMO_CHANNELS.map(([id, group, groupName, name, audience, kind], i) => ({
+    id,
+    group,
+    groupName,
+    name,
+    audience,
+    kind,
+    webhook: `https://discord.com/api/webhooks/1000000000000000${String(i + 10).padStart(2, '0')}/demo-${id}-token-not-real-0000000000`,
   }));
 }
 
@@ -96,12 +121,12 @@ function build(spec: SeedSpec, now: Date): Post {
   };
 }
 
-const ROOM_B = '數位創新基地 3F 互動實驗室';
-const ROOM_C = '數位創新基地 2F 製作教室';
+const ROOM_B = '3F 301 教室';
+const ROOM_C = '2F 202 教室';
 
 export function demoPosts(now: Date = new Date()): Post[] {
   const specs: SeedSpec[] = [];
-  // 三-VSAI 互動機台：週三 18:30–21:30
+  // 互動設計實作：週三 18:30–21:30
   for (const w of [-3, -2, -1, 0, 1]) {
     const day = weekday(now, 3, w);
     const ev = atTime(day, 18, 30);
@@ -110,8 +135,8 @@ export function demoPosts(now: Date = new Date()): Post[] {
     const n = 6 + w;
     specs.push({
       type: 'class',
-      title: `VSAI 第 ${n} 週上課提醒`,
-      body: w === 0 ? '這週進入感測器實作，會用到上週焊好的模組，請一定要帶來。' : '這週會延續上週的互動機台原型，請把進度帶來課堂討論。',
+      title: `互動設計 第 ${n} 週上課提醒`,
+      body: w === 0 ? '這週進入感測器實作，會用到上週焊好的模組，請一定要帶來。' : '這週會延續上週的互動裝置原型，請把進度帶來課堂討論。',
       channels: ['b-announce'],
       sendAt,
       eventAt: ev,
@@ -121,14 +146,14 @@ export function demoPosts(now: Date = new Date()): Post[] {
       mention: 'everyone',
     });
   }
-  // 四-跨域數位製作 TN0006：週四 18:30–21:30
+  // 數位內容製作：週四 18:30–21:30
   for (const w of [-2, -1, 0, 1]) {
     const day = weekday(now, 4, w);
     const sendAt = atTime(day.getTime() - DAY_MS, 20, 30);
     specs.push({
       type: 'class',
-      title: `TN0006 第 ${5 + w} 週上課提醒`,
-      body: '本週主題：跨域合作的製作流程與分工。上課前請先看過學習資源區的影片。',
+      title: `數位內容 第 ${5 + w} 週上課提醒`,
+      body: '本週主題：團隊合作的製作流程與分工。上課前請先看過學習資源區的影片。',
       channels: ['c-announce'],
       sendAt,
       eventAt: atTime(day, 18, 30),
@@ -141,12 +166,12 @@ export function demoPosts(now: Date = new Date()): Post[] {
   const hw1 = atTime(weekday(now, 2, -1), 23, 59);
   specs.push({
     type: 'homework',
-    title: 'VSAI 作業一繳交提醒',
-    body: '作業一：互動機台概念草圖與使用情境說明。\n- 格式：PDF，一頁即可\n- 檔名：學號_姓名_作業一',
+    title: '互動設計 作業一繳交提醒',
+    body: '作業一：互動裝置概念草圖與使用情境說明。\n- 格式：PDF，一頁即可\n- 檔名：學號_姓名_作業一',
     channels: ['b-homework'],
     sendAt: atTime(hw1.getTime() - 3 * DAY_MS, 9),
     deadline: hw1,
-    links: [{ label: '繳交表單', url: 'https://forms.gle/demo-vsai-hw1' }],
+    links: [{ label: '繳交表單', url: 'https://forms.gle/demo-hw1' }],
   });
   const hw2 = atTime(weekday(now, 2, 1), 23, 59);
   const series = randomId('s');
@@ -158,12 +183,12 @@ export function demoPosts(now: Date = new Date()): Post[] {
     const at = atTime(hw2.getTime() - offset * DAY_MS, hh);
     specs.push({
       type: 'homework',
-      title: 'VSAI 作業二繳交提醒',
+      title: '互動設計 作業二繳交提醒',
       body: '作業二：感測器互動原型影片（30 秒內）。\n- 上傳到雲端資料夾\n- 影片中請說明互動方式',
       channels: ['b-homework'],
       sendAt: at,
       deadline: hw2,
-      links: [{ label: '上傳資料夾', url: 'https://drive.google.com/drive/folders/demo-vsai-hw2' }],
+      links: [{ label: '上傳資料夾', url: 'https://drive.google.com/drive/folders/demo-hw2' }],
       series,
       seriesLabel: label,
       mention: offset === 0 ? 'everyone' : 'none',
@@ -172,18 +197,18 @@ export function demoPosts(now: Date = new Date()): Post[] {
   const tnHw = atTime(weekday(now, 0, 1), 23, 59);
   specs.push({
     type: 'homework',
-    title: 'TN0006 期中提案上傳',
+    title: '數位內容 期中提案上傳',
     body: '請各組上傳期中提案簡報，下週課堂每組報告 5 分鐘。',
     channels: ['c-homework'],
     sendAt: atTime(tnHw.getTime() - 2 * DAY_MS, 20),
     deadline: tnHw,
-    links: [{ label: '上傳到 GitHub Classroom', url: 'https://github.com/demo-classroom/tn0006-midterm' }],
+    links: [{ label: '上傳到 GitHub Classroom', url: 'https://github.com/demo-classroom/midterm' }],
   });
   // 補課
   const makeup = weekday(now, 6, 1);
   specs.push({
     type: 'makeup',
-    title: 'TN0006 補課通知',
+    title: '數位內容 補課通知',
     body: '上上週因颱風停課的進度，改到這個時間補課，補課內容同樣會錄影放在學習資源。',
     channels: ['c-makeup', 'c-announce'],
     sendAt: atTime(now.getTime() + 2 * DAY_MS, 12),
@@ -215,7 +240,7 @@ export function demoPosts(now: Date = new Date()): Post[] {
   // 學習資源
   specs.push({
     type: 'resource',
-    title: 'TN0006 第四週簡報與錄影',
+    title: '數位內容 第四週簡報與錄影',
     body: '課堂簡報與錄影已整理好，沒來的同學記得補看。',
     channels: ['c-resource'],
     sendAt: atTime(weekday(now, 4, -1), 22, 10),
@@ -226,11 +251,11 @@ export function demoPosts(now: Date = new Date()): Post[] {
   });
   specs.push({
     type: 'resource',
-    title: 'VSAI 每週資源整理',
+    title: '互動設計 每週資源整理',
     body: '本週提到的範例程式、零件清單與延伸閱讀都整理在這裡。',
     channels: ['b-resource'],
     sendAt: atTime(weekday(now, 5, now.getTime() < atTime(weekday(now, 5, 0), 21).getTime() ? 0 : 1), 21),
-    links: [{ label: '資源整理', url: 'https://hackmd.io/demo-vsai-weekly' }],
+    links: [{ label: '資源整理', url: 'https://hackmd.io/demo-weekly' }],
     repeat: { freq: 'weekly', interval: 1 },
   });
   // 大群組
@@ -246,7 +271,7 @@ export function demoPosts(now: Date = new Date()): Post[] {
   });
   specs.push({
     type: 'announce',
-    title: '互動學程說明會直播',
+    title: '學程說明會直播',
     body: '說明會即將開始，沒辦法到現場的同學可以看直播。',
     channels: ['a-announce'],
     sendAt: new Date(Math.ceil((now.getTime() + 2 * 60000) / 60000) * 60000),
