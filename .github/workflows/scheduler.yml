@@ -1,6 +1,7 @@
 # 每 5 分鐘檢查一次，把到期的貼文發到 Discord。
 # 需要的 Secret：TNDA_SYNC_KEY（網站的初始設定精靈會自動幫你設定）。
 # 公開 repo 的 Actions 不限分鐘數，這個排程完全免費。
+# GitHub 的定時排程在尖峰時段可能延遲數分鐘；網站上的「立即執行」會透過 workflow_dispatch 立刻觸發。
 name: 排程發送
 
 on:
