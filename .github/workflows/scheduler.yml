@@ -1,0 +1,49 @@
+# 每 5 分鐘檢查一次，把到期的貼文發到 Discord。
+# 需要的 Secret：TNDA_SYNC_KEY（網站的初始設定精靈會自動幫你設定）。
+# 公開 repo 的 Actions 不限分鐘數，這個排程完全免費。
+name: 排程發送
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 觸發原因
+        required: false
+        default: manual
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: tnda-scheduler
+  cancel-in-progress: false
+
+jobs:
+  send:
+    name: 發送到期貼文
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: 發送
+        env:
+          TNDA_SYNC_KEY: ${{ secrets.TNDA_SYNC_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          # 排程觸發時，會等待並準時發送接下來 4.5 分鐘內到期的貼文
+          TNDA_LOOKAHEAD_SECONDS: ${{ github.event_name == 'schedule' && '270' || '0' }}
+        run: node scripts/scheduler.ts
+      - name: 保持排程啟用
+        # 公開 repo 連續 60 天沒有活動時，GitHub 會停用排程；每天呼叫一次 enable 讓它維持運作
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$(date -u +%H%M)" \< "0010" ]; then
+            gh api -X PUT "repos/${{ github.repository }}/actions/workflows/scheduler.yml/enable" || true
+          fi

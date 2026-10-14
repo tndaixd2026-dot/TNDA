@@ -1,0 +1,364 @@
+import { useEffect, useState } from 'preact/hooks';
+import type { MentionMode, Settings } from '../core/types.ts';
+import {
+  beginSetup,
+  demoSeededAt,
+  disconnect,
+  refreshScheduler,
+  resetDemo,
+  runSchedulerNow,
+  saveSettings,
+  toast,
+  updateConfig,
+  useApp,
+} from '../data/store.ts';
+import { DEMO_ONLY, buildDeviceLink } from '../data/config.ts';
+import { fmtDateTime, fmtRelative } from '../core/time.ts';
+import { Btn, Modal, Seg, Switch, askConfirm, copyText, downloadText } from '../ui/kit.tsx';
+import { Icon } from '../ui/icons.tsx';
+import { makeClient, storeSyncKeySecret } from '../data/setup.ts';
+import { SECRET_NAME } from '../core/repo.ts';
+
+export function SettingsPage() {
+  const { settings, config, scheduler } = useApp((s) => ({ settings: s.settings, config: s.config, scheduler: s.scheduler }));
+  const [form, setForm] = useState<Settings>(settings);
+  const [saving, setSaving] = useState(false);
+  const [showKey, setShowKey] = useState(false);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [secretBusy, setSecretBusy] = useState(false);
+  useEffect(() => setForm(settings), [settings]);
+  useEffect(() => {
+    void refreshScheduler();
+  }, []);
+  const dirty = JSON.stringify(form) !== JSON.stringify(settings);
+  const github = config.mode === 'github';
+  const actionsUrl = `https://github.com/${config.owner}/${config.repo}/actions/workflows/scheduler.yml`;
+
+  return (
+    <>
+      <div class="page-head">
+        <div class="titles">
+          <h1 class="page-title">設定</h1>
+          <p class="page-sub">發送者的名稱與頭像、雲端同步、排程器與這台裝置的偏好。</p>
+        </div>
+      </div>
+
+      <div class="settings-grid">
+        <section class="card card-pad stack">
+          <div>
+            <h3>發送者</h3>
+            <p class="small muted">Discord 上顯示的名稱與頭像，所有裝置共用。</p>
+          </div>
+          <div class="field">
+            <label for="s-name">名稱</label>
+            <input id="s-name" class="input" maxLength={80} value={form.senderName} onInput={(e) => setForm({ ...form, senderName: (e.currentTarget as HTMLInputElement).value })} />
+            <span class="help">不能包含「discord」或「clyde」。</span>
+          </div>
+          <div class="field">
+            <label for="s-avatar">頭像圖片網址（選填）</label>
+            <div class="row" style={{ flexWrap: 'nowrap' }}>
+              {form.avatarUrl ? <img src={form.avatarUrl} alt="" width={38} height={38} style={{ borderRadius: '50%', objectFit: 'cover', flex: 'none' }} /> : null}
+              <input id="s-avatar" class="input mono" value={form.avatarUrl} placeholder="https://…/logo.png" onInput={(e) => setForm({ ...form, avatarUrl: (e.currentTarget as HTMLInputElement).value.trim() })} />
+            </div>
+            <span class="help">留空會使用 Discord 上 Webhook 本身的頭像。</span>
+          </div>
+          <div class="field">
+            <label for="s-footer">卡片頁尾</label>
+            <input id="s-footer" class="input" value={form.footer} placeholder="例如：TNDA 互動學程｜有問題請在討論室發問" onInput={(e) => setForm({ ...form, footer: (e.currentTarget as HTMLInputElement).value })} />
+          </div>
+          <div class="field">
+            <span class="label">預設標註</span>
+            <Seg<MentionMode>
+              label="預設標註"
+              value={form.defaultMention}
+              onChange={(v) => setForm({ ...form, defaultMention: v })}
+              options={[
+                { value: 'none', label: '不標註' },
+                { value: 'everyone', label: '@everyone' },
+                { value: 'here', label: '@here' },
+              ]}
+            />
+          </div>
+          <div class="row">
+            <Btn
+              variant="primary"
+              busy={saving}
+              disabled={!dirty || /discord|clyde/i.test(form.senderName)}
+              onClick={async () => {
+                setSaving(true);
+                await saveSettings(form);
+                setSaving(false);
+              }}
+            >
+              儲存
+            </Btn>
+            {dirty ? (
+              <Btn variant="ghost" onClick={() => setForm(settings)}>
+                還原
+              </Btn>
+            ) : null}
+          </div>
+        </section>
+
+        <section class="card card-pad stack">
+          <div>
+            <h3>雲端同步</h3>
+            <p class="small muted">
+              {github ? '資料以 AES-256-GCM 加密後存在 GitHub repo，任何裝置登入後都看得到同一份。' : '目前是 Demo 模式，資料只存在這個瀏覽器。'}
+            </p>
+          </div>
+          {github ? (
+            <>
+              <dl class="kv">
+                <dt>Repo</dt>
+                <dd>
+                  <a href={`https://github.com/${config.owner}/${config.repo}`} target="_blank" rel="noopener noreferrer">
+                    {config.owner}/{config.repo}
+                  </a>
+                </dd>
+                <dt>資料分支</dt>
+                <dd class="mono">{config.branch}</dd>
+                <dt>Token</dt>
+                <dd class="mono">{config.token.slice(0, 11)}••••••••</dd>
+                <dt>同步金鑰</dt>
+                <dd class="mono" style={{ wordBreak: 'break-all' }}>
+                  {showKey ? config.syncKey : `${config.syncKey.slice(0, 9)}••••-••••-••••`}
+                </dd>
+              </dl>
+              <div class="row">
+                <Btn size="sm" icon="eye" onClick={() => setShowKey(!showKey)}>
+                  {showKey ? '隱藏金鑰' : '顯示金鑰'}
+                </Btn>
+                <Btn
+                  size="sm"
+                  icon="copy"
+                  onClick={async () => {
+                    const ok = await copyText(config.syncKey);
+                    toast(ok ? 'ok' : 'error', ok ? '已複製同步金鑰' : '無法複製，請點「顯示金鑰」後手動選取');
+                  }}
+                >
+                  複製金鑰
+                </Btn>
+                <Btn
+                  size="sm"
+                  icon="download"
+                  onClick={() =>
+                    downloadText(
+                      `TNDA-Relay-同步金鑰-${config.repo}.txt`,
+                      `TNDA Relay 同步金鑰（請妥善保存，遺失將無法解開資料）\n\nRepo：${config.owner}/${config.repo}\n資料分支：${config.branch}\n同步金鑰：${config.syncKey}\n\n建立時間：${new Date().toLocaleString('zh-TW')}\n`,
+                    )
+                  }
+                >
+                  下載備份
+                </Btn>
+              </div>
+              <div class="callout">
+                <Icon name="phone" />
+                <span style={{ flex: 1 }}>想在手機或其他電腦使用？產生一個連結，打開就自動設定好。</span>
+                <Btn size="sm" icon="qr" onClick={() => setLinkOpen(true)}>
+                  連結其他裝置
+                </Btn>
+              </div>
+            </>
+          ) : (
+            <div class="stack-sm">
+              {!DEMO_ONLY ? (
+                <Btn variant="primary" icon="branch" onClick={beginSetup}>
+                  連接 GitHub，開始正式使用
+                </Btn>
+              ) : (
+                <div class="callout">
+                  <Icon name="info" />
+                  <span>這是展示版。正式版部署在 GitHub Pages，資料會加密同步到 GitHub、由 GitHub Actions 準時發送到 Discord。</span>
+                </div>
+              )}
+              <div class="row">
+                <Btn
+                  size="sm"
+                  icon="refresh"
+                  onClick={async () => {
+                    if (await askConfirm({ title: '重設範例資料？', body: '你在 Demo 中新增或修改的內容會被清除。', confirmLabel: '重設', danger: true })) resetDemo();
+                  }}
+                >
+                  重設範例資料
+                </Btn>
+                <span class="small faint">範例產生於 {demoSeededAt() ? fmtRelative(Date.parse(demoSeededAt()!)) : '剛剛'}</span>
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section class="card card-pad stack">
+          <div>
+            <h3>排程器</h3>
+            <p class="small muted">GitHub Actions 每 5 分鐘檢查一次，把到期的貼文發到 Discord。公開 repo 完全免費。</p>
+          </div>
+          {scheduler.runs.length ? (
+            <div class="delivery-list">
+              {scheduler.runs.slice(0, 5).map((r) => {
+                const ok = r.conclusion === 'success';
+                const running = r.status !== 'completed';
+                return (
+                  <div key={r.id} class="delivery">
+                    <span class={`d-icon ${running ? 'wait' : ok ? 'ok' : 'bad'}`}>
+                      <Icon name={running ? 'clock' : ok ? 'check' : 'x'} />
+                    </span>
+                    <div>
+                      <div>
+                        {fmtDateTime(r.created_at)} <span class="faint small">· {r.event === 'schedule' ? '定時' : '手動'}</span>
+                      </div>
+                      <div class="small muted">{running ? '執行中' : ok ? '完成' : `失敗（${r.conclusion}）`}</div>
+                    </div>
+                    {github ? (
+                      <a class="btn btn-ghost btn-sm" href={r.html_url} target="_blank" rel="noopener noreferrer">
+                        紀錄
+                      </a>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div class="callout callout-warn">
+              <Icon name="alert" />
+              <span>{scheduler.error ? `讀不到執行紀錄：${scheduler.error}` : '還沒有執行紀錄。排程器第一次執行可能要等 5～15 分鐘。'}</span>
+            </div>
+          )}
+          <div class="row">
+            <Btn size="sm" icon="play" onClick={() => void runSchedulerNow()}>
+              立即執行一次
+            </Btn>
+            {github ? (
+              <>
+                <a class="btn btn-sm" href={actionsUrl} target="_blank" rel="noopener noreferrer">
+                  <Icon name="external" />
+                  在 GitHub 查看
+                </a>
+                <Btn
+                  size="sm"
+                  icon="key"
+                  busy={secretBusy}
+                  onClick={async () => {
+                    setSecretBusy(true);
+                    try {
+                      await storeSyncKeySecret(makeClient(config.owner, config.repo, config.token), config.syncKey);
+                      toast('ok', `已把同步金鑰存到 GitHub Secret（${SECRET_NAME}）`);
+                    } catch (err) {
+                      toast('error', `無法設定 Secret：${(err as Error).message}。請確認 Token 有 Secrets 寫入權限，或手動設定。`);
+                    } finally {
+                      setSecretBusy(false);
+                    }
+                  }}
+                >
+                  重新設定排程器金鑰
+                </Btn>
+              </>
+            ) : null}
+          </div>
+          <p class="small faint">GitHub 的排程在尖峰時段可能延遲幾分鐘；網站開著時，「準時代發」會在時間一到就由這台裝置直接送出。</p>
+        </section>
+
+        <section class="card card-pad stack">
+          <div>
+            <h3>這台裝置</h3>
+            <p class="small muted">只影響目前這個瀏覽器。</p>
+          </div>
+          {github ? (
+            <Switch id="s-precision" checked={config.precision} onChange={(v) => updateConfig({ precision: v })}>
+              準時代發：網站開著時，到時間就由這台裝置直接發送
+            </Switch>
+          ) : null}
+          <div class="row">
+            <span class="small muted" style={{ minWidth: 72 }}>
+              介面主題
+            </span>
+            <Seg
+              label="介面主題"
+              value={config.theme}
+              onChange={(v) => updateConfig({ theme: v })}
+              options={[
+                { value: 'system', label: '跟隨系統' },
+                { value: 'light', label: <><Icon name="sun" /> 淺色</> },
+                { value: 'dark', label: <><Icon name="moon" /> 深色</> },
+              ]}
+            />
+          </div>
+          <div class="row">
+            <span class="small muted" style={{ minWidth: 72 }}>
+              預覽主題
+            </span>
+            <Seg label="Discord 預覽主題" value={config.previewTheme} onChange={(v) => updateConfig({ previewTheme: v })} options={[{ value: 'dark', label: 'Discord 深色' }, { value: 'light', label: 'Discord 淺色' }]} />
+          </div>
+          {!DEMO_ONLY ? (
+            <div>
+              <Btn
+                variant="danger"
+                icon="logout"
+                onClick={async () => {
+                  const ok = await askConfirm({
+                    title: github ? '中斷這台裝置的連線？' : '離開 Demo？',
+                    body: github ? '會清除這台裝置上的 Token、同步金鑰與快取。GitHub 上的資料不受影響，之後可以重新連接。請先確認同步金鑰已備份。' : '會清除 Demo 資料並回到起始畫面。',
+                    confirmLabel: github ? '中斷連線' : '離開 Demo',
+                    danger: true,
+                  });
+                  if (ok) await disconnect();
+                }}
+              >
+                {github ? '中斷連線並清除這台裝置的資料' : '離開 Demo'}
+              </Btn>
+            </div>
+          ) : null}
+        </section>
+      </div>
+
+      {linkOpen ? <DeviceLinkModal onClose={() => setLinkOpen(false)} /> : null}
+    </>
+  );
+}
+
+function DeviceLinkModal({ onClose }: { onClose: () => void }) {
+  const config = useApp((s) => s.config);
+  const link = buildDeviceLink(config);
+  const [svg, setSvg] = useState('');
+  const [reveal, setReveal] = useState(false);
+  useEffect(() => {
+    if (!reveal) return;
+    void import('uqr').then(({ renderSVG }) => setSvg(renderSVG(link, { pixelSize: 6, border: 1 })));
+  }, [reveal, link]);
+  return (
+    <Modal title="連結其他裝置" onClose={onClose}>
+      <div class="stack" style={{ marginTop: 8 }}>
+        <div class="callout callout-warn">
+          <Icon name="lock" />
+          <span>這個連結包含你的 Token 與同步金鑰，等同完整權限。只在自己的裝置上使用，不要傳給別人或貼到群組。</span>
+        </div>
+        {reveal ? (
+          <>
+            <div class="qr" dangerouslySetInnerHTML={{ __html: svg }} aria-label="裝置連結 QR Code" />
+            <p class="small muted" style={{ textAlign: 'center' }}>
+              用手機相機掃描，或複製連結到另一台電腦的瀏覽器打開。
+            </p>
+          </>
+        ) : (
+          <Btn variant="primary" icon="qr" onClick={() => setReveal(true)}>
+            我了解，顯示 QR Code
+          </Btn>
+        )}
+      </div>
+      <div class="modal-actions">
+        <Btn onClick={onClose}>關閉</Btn>
+        {reveal ? (
+          <Btn
+            icon="copy"
+            onClick={async () => {
+              const ok = await copyText(link);
+              toast(ok ? 'ok' : 'error', ok ? '已複製裝置連結' : '無法複製');
+            }}
+          >
+            複製連結
+          </Btn>
+        ) : null}
+      </div>
+    </Modal>
+  );
+}
