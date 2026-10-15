@@ -138,7 +138,7 @@ function Shell() {
               {n.label}
               {n.page === 'queue' && counts.queue ? <span class="count">{counts.queue}</span> : null}
               {n.page === 'history' && counts.failed ? (
-                <span class="count" style={{ color: 'var(--express-text)' }}>
+                <span class="count alert" title="需要處理">
                   {counts.failed}
                 </span>
               ) : null}

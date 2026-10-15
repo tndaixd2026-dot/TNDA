@@ -63,6 +63,7 @@ export function Channels() {
     <>
       <div class="page-head">
         <div class="titles">
+          <div class="eyebrow">TNDA RELAY / CHANNELS</div>
           <h1 class="page-title">頻道</h1>
           <p class="page-sub">要發送的 Discord 聊天室。Webhook 網址等同發文權限，會加密後才存到 GitHub。</p>
         </div>
@@ -349,7 +350,7 @@ function EditModal({ channel, onClose }: { channel: Channel | null; onClose: () 
           />
           <span class="help">
             在 Discord 頻道的「編輯頻道 → 整合 → Webhook → 複製 Webhook 網址」取得。
-            {!urlOk ? <b style={{ color: 'var(--express-text)' }}> 這不是有效的 Discord Webhook 網址。</b> : null}
+            {!urlOk ? <b style={{ color: 'var(--danger-text)' }}> 這不是有效的 Discord Webhook 網址。</b> : null}
           </span>
         </div>
       </div>

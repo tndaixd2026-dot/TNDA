@@ -104,8 +104,8 @@ export function DiscordPreview({
         ) : (
           <div class="dc-avatar" aria-hidden="true">
             <svg viewBox="0 0 40 40" width="40" height="40">
-              <rect width="40" height="40" fill="#0b7a4b" />
-              <path d="M15 27V13h5.5a4 4 0 0 1 0 8H15M20.5 21l4.5 6" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
+              <rect width="40" height="40" fill="#fe5732" />
+              <path d="M15 27V13h5.5a4 4 0 0 1 0 8H15M20.5 21l4.5 6" fill="none" stroke="#111" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
           </div>
         )}

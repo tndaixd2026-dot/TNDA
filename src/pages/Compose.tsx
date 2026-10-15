@@ -208,6 +208,7 @@ export function Compose() {
     <>
       <div class="page-head">
         <div class="titles">
+          <div class="eyebrow">TNDA RELAY / COMPOSE</div>
           <h1 class="page-title">{title}</h1>
           <p class="page-sub">
             {editSent ? 'Discord 上的訊息會直接更新，並標示「已編輯」。' : '貼上原始文字，系統會自動整理成 Discord 格式，確認後排程發送。'}
@@ -225,7 +226,7 @@ export function Compose() {
           {/* 1. 貼上內容 */}
           <section class="card card-pad">
             <div class="section-title">
-              <span class="step">1</span>
+              <span class="step">01</span>
               貼上內容
               <span class="hint">隨手貼上就好，日期、時間、地點、連結會自動辨識</span>
             </div>
@@ -283,7 +284,7 @@ export function Compose() {
           {/* 2. 整理結果 */}
           <section class="card card-pad">
             <div class="section-title">
-              <span class="step">2</span>
+              <span class="step">02</span>
               整理結果
               <span class="hint">可以直接修改，右側預覽會即時更新</span>
             </div>
@@ -375,7 +376,7 @@ export function Compose() {
           {/* 3. 發送設定 */}
           <section class="card card-pad">
             <div class="section-title">
-              <span class="step">3</span>
+              <span class="step">03</span>
               發到哪裡、什麼時候
             </div>
             {editSent ? (

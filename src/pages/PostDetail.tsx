@@ -228,7 +228,7 @@ export function PostDetail({ id }: { id: string }) {
             <h3 style={{ fontSize: 14, marginBottom: 8 }}>同一組提醒</h3>
             <div class="agenda">
               {series.map((s: Post) => (
-                <button key={s.id} type="button" class="agenda-item" onClick={() => openDetail(s.id)} style={{ '--c': 'var(--post)' } as JSX.CSSProperties}>
+                <button key={s.id} type="button" class="agenda-item" onClick={() => openDetail(s.id)} style={{ '--c': 'var(--brand)' } as JSX.CSSProperties}>
                   <span class="bar" />
                   <span class="a-time">{fmtDateTime(s.sendAt)}</span>
                   <span style={{ flex: 1 }}>{s.seriesLabel ?? s.title}</span>

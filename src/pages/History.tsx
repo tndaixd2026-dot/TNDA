@@ -75,6 +75,7 @@ export function History() {
     <>
       <div class="page-head">
         <div class="titles">
+          <div class="eyebrow">TNDA RELAY / HISTORY</div>
           <h1 class="page-title">發文紀錄</h1>
           <p class="page-sub">所有貼文與每個頻道的發送結果。點一列可以查看內容、重送或撤回。</p>
         </div>
@@ -190,8 +191,8 @@ function HistoryRow({ post }: { post: Post }) {
           <span class="faint">—</span>
         ) : (
           <>
-            <span style={{ color: 'var(--post-text)' }}>{s.sent}✓</span>
-            {s.failed ? <span style={{ color: 'var(--express-text)', marginLeft: 6 }}>{s.failed}✗</span> : null}
+            <span style={{ color: 'var(--ok-text)' }}>{s.sent}✓</span>
+            {s.failed ? <span style={{ color: 'var(--danger-text)', marginLeft: 6 }}>{s.failed}✗</span> : null}
             <span class="faint"> / {s.total}</span>
           </>
         )}

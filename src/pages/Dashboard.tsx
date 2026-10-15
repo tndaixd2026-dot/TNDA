@@ -48,7 +48,9 @@ export function Dashboard() {
           <div class="eyebrow">
             {p.y} 年 {p.m} 月 {p.d} 日 星期{WEEKDAYS[p.dow]}
           </div>
-          <h1 class="page-title">{greeting(p.hh)}，今天要發什麼？</h1>
+          <h1 class="page-title">
+            {greeting(p.hh)}，<span class="accent">今天要發什麼？</span>
+          </h1>
           <p class="page-sub">
             接下來 7 天有 <b>{week.length}</b> 則貼文會自動發送{attention.length ? `，有 ${attention.length} 則需要處理` : ''}。
           </p>
@@ -281,7 +283,7 @@ function NextTicket({ post, now, busy }: { post: Post; now: number; busy: boolea
       <div class="ticket-stub">
         <span class="eyebrow">{late || post.status === 'sending' ? '狀態' : '倒數'}</span>
         <span class="countdown">{post.status === 'sending' || busy ? '發送中…' : late ? '即將發送' : fmtCountdown(at - now)}</span>
-        <span class="small" style={{ opacity: 0.85 }}>
+        <span class="small">
           {late ? '排程器會在幾分鐘內處理' : `${fmtDateTime(at)} 發出`}
         </span>
       </div>
@@ -293,7 +295,7 @@ function RecentItem({ post }: { post: Post }) {
   const failed = post.channels.filter((c) => deliveryOf(post, c).status === 'failed').length;
   return (
     <button type="button" class="agenda-item" style={{ border: 0, background: 'none' }} onClick={() => openDetail(post.id)}>
-      <span class="bar" style={{ background: failed ? 'var(--express)' : 'var(--post)' }} />
+      <span class="bar" style={{ background: failed ? 'var(--danger)' : 'var(--ok)' }} />
       <span style={{ flex: 1, minWidth: 0 }}>
         <span style={{ display: 'block', fontWeight: 600, fontSize: 14 }}>{post.title}</span>
         <span class="small faint">{fmtRelative(Date.parse(post.sentAt!))} · {post.channels.length} 個頻道</span>

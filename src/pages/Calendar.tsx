@@ -81,6 +81,7 @@ export function CalendarPage() {
     <>
       <div class="page-head">
         <div class="titles">
+          <div class="eyebrow">TNDA RELAY / CALENDAR</div>
           <h1 class="page-title">行事曆</h1>
           <p class="page-sub">看每天要發的貼文，以及上課、截止的時間。桌機上可以把排程拖到其他天改期。</p>
         </div>
@@ -193,7 +194,7 @@ export function CalendarPage() {
           {selItems.length ? (
             <div class="agenda">
               {selItems.map((it) => (
-                <button key={it.key} type="button" class="agenda-item" style={{ '--c': it.kind === 'deadline' ? 'var(--express)' : TYPE_META[it.post.type].hex } as JSX.CSSProperties} onClick={() => openDetail(it.post.id)}>
+                <button key={it.key} type="button" class="agenda-item" style={{ '--c': it.kind === 'deadline' ? 'var(--danger)' : TYPE_META[it.post.type].hex } as JSX.CSSProperties} onClick={() => openDetail(it.post.id)}>
                   <span class="bar" />
                   <span class="a-time">{fmtTime(it.at)}</span>
                   <span style={{ flex: 1, minWidth: 0 }}>
@@ -221,7 +222,7 @@ export function CalendarPage() {
 function Chip({ it, onDragStart, onDragEnd }: { it: Item; onDragStart: (id: string) => void; onDragEnd: () => void }) {
   const p = it.post;
   const draggable = it.kind === 'post' && (p.status === 'scheduled' || p.status === 'draft');
-  const color = it.kind === 'deadline' ? 'var(--express)' : TYPE_META[p.type].hex;
+  const color = it.kind === 'deadline' ? 'var(--danger)' : TYPE_META[p.type].hex;
   const cls = it.kind === 'post' ? `${['sent', 'partial'].includes(p.status) ? 'done' : ''} ${['failed', 'partial'].includes(p.status) ? 'bad' : ''}` : 'event';
   return (
     <span
@@ -240,8 +241,10 @@ function Chip({ it, onDragStart, onDragEnd }: { it: Item; onDragStart: (id: stri
       title={`${fmtTime(it.at)} ${it.label}`}
     >
       <span class="mono">{fmtTime(it.at)}</span>
-      {it.kind === 'deadline' ? '⏰ ' : ''}
-      {it.label}
+      <span class="cal-chip-label">
+        {it.kind === 'deadline' ? '⏰ ' : ''}
+        {it.label}
+      </span>
     </span>
   );
 }

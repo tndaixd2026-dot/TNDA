@@ -71,10 +71,10 @@ export function Icon({ name, class: cls, title, ...rest }: { name: IconName; cla
 export function BrandMark({ class: cls }: { class?: string }) {
   return (
     <svg class={`brand-mark ${cls ?? ''}`} viewBox="0 0 40 40" aria-hidden="true">
-      <circle cx="17" cy="20" r="14" fill="var(--post)" />
-      <circle cx="17" cy="20" r="10.2" fill="none" stroke="var(--post-ink)" stroke-width="1.3" stroke-dasharray="2.2 2" />
-      <path d="M13.2 25.5v-11h4.6a3.3 3.3 0 0 1 0 6.6h-4.6M17.8 21.1l3.6 4.4" fill="none" stroke="var(--post-ink)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-      <path d="M31 13.5c1.4-1.2 2.6 1.2 4 0M31 20c1.4-1.2 2.6 1.2 4 0M31 26.5c1.4-1.2 2.6 1.2 4 0" fill="none" stroke="var(--post)" stroke-width="1.8" stroke-linecap="round" />
+      <circle cx="17" cy="20" r="14" fill="var(--mark-bg)" />
+      <circle cx="17" cy="20" r="10.2" fill="none" stroke="var(--mark-ink)" stroke-width="1.3" stroke-dasharray="2.2 2" />
+      <path d="M13.2 25.5v-11h4.6a3.3 3.3 0 0 1 0 6.6h-4.6M17.8 21.1l3.6 4.4" fill="none" stroke="var(--mark-ink)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M31 13.5c1.4-1.2 2.6 1.2 4 0M31 20c1.4-1.2 2.6 1.2 4 0M31 26.5c1.4-1.2 2.6 1.2 4 0" fill="none" stroke="var(--mark-bg)" stroke-width="1.8" stroke-linecap="round" />
     </svg>
   );
 }

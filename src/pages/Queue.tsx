@@ -57,6 +57,7 @@ export function Queue() {
     <>
       <div class="page-head">
         <div class="titles">
+          <div class="eyebrow">TNDA RELAY / SCHEDULE</div>
           <h1 class="page-title">發送排程</h1>
           <p class="page-sub">時間到會自動發到 Discord。所有時間皆為台北時間。</p>
         </div>

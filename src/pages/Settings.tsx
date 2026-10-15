@@ -38,6 +38,7 @@ export function SettingsPage() {
     <>
       <div class="page-head">
         <div class="titles">
+          <div class="eyebrow">TNDA RELAY / SETTINGS</div>
           <h1 class="page-title">設定</h1>
           <p class="page-sub">發送者的名稱與頭像、雲端同步、排程器與這台裝置的偏好。</p>
         </div>

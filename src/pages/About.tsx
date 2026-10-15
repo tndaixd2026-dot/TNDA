@@ -17,7 +17,7 @@ export function About() {
   return (
     <div class="stack" style={{ gap: 22 }}>
       <section class="about-hero">
-        <div class="eyebrow" style={{ color: 'inherit', opacity: 0.8 }}>
+        <div class="eyebrow" style={{ color: 'inherit' }}>
           TNDA RELAY · 課務發報台
         </div>
         <h2>貼上一段話，學生就在對的頻道、對的時間收到整齊的公告</h2>
@@ -61,8 +61,8 @@ export function About() {
             <line x1="188" y1="115" x2="242" y2="115" stroke="var(--ink-3)" stroke-width="2" marker-end="url(#arr)" />
             <line x1="423" y1="115" x2="477" y2="115" stroke="var(--ink-3)" stroke-width="2" marker-end="url(#arr)" />
             <line x1="658" y1="115" x2="712" y2="115" stroke="var(--ink-3)" stroke-width="2" marker-end="url(#arr)" />
-            <path d="M97 192 C 97 235, 800 235, 800 192" fill="none" stroke="var(--post)" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arr)" />
-            <text x="450" y="244" text-anchor="middle" font-size="12.5" fill="var(--post-text)">
+            <path d="M97 192 C 97 235, 800 235, 800 192" fill="none" stroke="var(--brand-text)" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arr)" />
+            <text x="450" y="244" text-anchor="middle" font-size="12.5" fill="var(--brand-text)">
               網站開著時「準時代發」：時間一到由瀏覽器直接送出
             </text>
             <text x="10" y="24" font-size="12.5" fill="var(--ink-3)">
