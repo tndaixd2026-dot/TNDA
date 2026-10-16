@@ -16,7 +16,7 @@ import { DEMO_ONLY, buildDeviceLink } from '../data/config.ts';
 import { fmtDateTime, fmtRelative } from '../core/time.ts';
 import { Btn, Modal, Seg, Switch, askConfirm, copyText, downloadText } from '../ui/kit.tsx';
 import { Icon } from '../ui/icons.tsx';
-import { makeClient, storeSyncKeySecret } from '../data/setup.ts';
+import { SCHEDULER_STALE_MS, cronTokenUrl, dispatchBody, dispatchUrl, makeClient, storeSyncKeySecret } from '../data/setup.ts';
 import { SECRET_NAME } from '../core/repo.ts';
 
 export function SettingsPage() {
@@ -192,7 +192,7 @@ export function SettingsPage() {
         <section class="card card-pad stack">
           <div>
             <h3>排程器</h3>
-            <p class="small muted">GitHub Actions 每 5 分鐘檢查一次，把到期的貼文發到 Discord。公開 repo 完全免費。</p>
+            <p class="small muted">排程器（GitHub Actions）負責把到期的貼文發到 Discord，公開 repo 完全免費。</p>
           </div>
           {scheduler.runs.length ? (
             <div class="delivery-list">
@@ -206,7 +206,7 @@ export function SettingsPage() {
                     </span>
                     <div>
                       <div>
-                        {fmtDateTime(r.created_at)} <span class="faint small">· {r.event === 'schedule' ? '定時' : '手動'}</span>
+                        {fmtDateTime(r.created_at)} <span class="faint small">· {r.event === 'schedule' ? 'GitHub 定時' : '外部定時器／手動'}</span>
                       </div>
                       <div class="small muted">{running ? '執行中' : ok ? '完成' : `失敗（${r.conclusion}）`}</div>
                     </div>
@@ -256,8 +256,10 @@ export function SettingsPage() {
               </>
             ) : null}
           </div>
-          <p class="small faint">GitHub 的排程在尖峰時段可能延遲幾分鐘；網站開著時，「準時代發」會在時間一到就由這台裝置直接送出。</p>
+          <p class="small faint">網站開著時，「準時代發」會在時間一到就由這台裝置直接送出，不必等排程器。</p>
         </section>
+
+        {github ? <CronSetup /> : null}
 
         <section class="card card-pad stack">
           <div>
@@ -361,5 +363,86 @@ function DeviceLinkModal({ onClose }: { onClose: () => void }) {
         ) : null}
       </div>
     </Modal>
+  );
+}
+
+/** 外部定時器設定：GitHub 內建的定時排程對新 repo 常常數小時才跑一次，改由 cron-job.org 每 5 分鐘觸發 */
+function CronSetup() {
+  const { config, runs } = useApp((s) => ({ config: s.config, runs: s.scheduler.runs }));
+  const [branch, setBranch] = useState('');
+  useEffect(() => {
+    makeClient(config.owner, config.repo, config.token)
+      .getRepo()
+      .then((r) => setBranch(r.default_branch))
+      .catch(() => setBranch(''));
+  }, [config.owner, config.repo, config.token]);
+  const recentDispatch = runs.find((r) => r.event === 'workflow_dispatch' && Date.now() - Date.parse(r.created_at) < SCHEDULER_STALE_MS);
+  const url = dispatchUrl(config.owner, config.repo);
+  const body = dispatchBody(branch || '（讀取中…）');
+  const copy = async (text: string, label: string) => {
+    const ok = await copyText(text);
+    toast(ok ? 'ok' : 'error', ok ? `已複製${label}` : '無法複製，請手動選取');
+  };
+  return (
+    <section class="card card-pad stack" style={{ gridColumn: '1 / -1' }}>
+      <div class="row" style={{ alignItems: 'flex-start' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h3>準時發送設定（外部定時器）</h3>
+          <p class="small muted">
+            GitHub 內建的定時排程對新 repo 常常好幾個小時才跑一次。用免費的 cron-job.org 每 5 分鐘叫醒排程器，貼文就會準時發出，網站不用開著。只需要設定一次。
+          </p>
+        </div>
+        <span class={`pill ${recentDispatch ? 'pill-ok' : 'pill-warn'}`}>
+          <span class="dot" />
+          {recentDispatch ? '運作中' : '尚未偵測到'}
+        </span>
+      </div>
+      <ol class="ol">
+        <li>
+          建立一個只給定時器用的 Token：打開{' '}
+          <a href={cronTokenUrl(config.owner, config.repo)} target="_blank" rel="noopener noreferrer">
+            建立 Token 頁面
+          </a>
+          ，Repository access 只選 <code class="inline">{config.owner}/{config.repo}</code>，權限只要 <b>Actions：Read and write</b>，Expiration 選一年。這個 Token 只能叫醒排程器，碰不到你的資料。
+        </li>
+        <li>
+          到{' '}
+          <a href="https://cron-job.org/" target="_blank" rel="noopener noreferrer">
+            cron-job.org
+          </a>{' '}
+          免費註冊，按「CREATE CRONJOB」：
+        </li>
+      </ol>
+      <div class="perm-table" style={{ gridTemplateColumns: 'auto minmax(0, 1fr) auto', alignItems: 'center' }}>
+        <b>URL</b>
+        <code class="inline">{url}</code>
+        <Btn size="sm" variant="ghost" iconOnly icon="copy" onClick={() => void copy(url, '網址')}>
+          複製網址
+        </Btn>
+        <b>Execution schedule</b>
+        <span>Every 5 minutes</span>
+        <span />
+        <b>Request method</b>
+        <span>POST（在 ADVANCED 分頁）</span>
+        <span />
+        <b>Headers</b>
+        <span>
+          <code class="inline">Authorization</code>：<code class="inline">Bearer 剛剛建立的 Token</code>
+          <br />
+          <code class="inline">Accept</code>：<code class="inline">application/vnd.github+json</code>
+        </span>
+        <Btn size="sm" variant="ghost" iconOnly icon="copy" onClick={() => void copy('application/vnd.github+json', ' Accept 內容')}>
+          複製 Accept
+        </Btn>
+        <b>Request body</b>
+        <code class="inline">{body}</code>
+        <Btn size="sm" variant="ghost" iconOnly icon="copy" disabled={!branch} onClick={() => void copy(body, '內容')}>
+          複製內容
+        </Btn>
+      </div>
+      <ol class="ol" start={3}>
+        <li>儲存後等 5 分鐘，上方「排程器」的紀錄會開始出現「外部定時器」，右上角會變成「運作中」。</li>
+      </ol>
+    </section>
   );
 }

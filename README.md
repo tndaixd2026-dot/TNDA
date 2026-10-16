@@ -28,14 +28,14 @@ TNDA Relay 把「整理格式、選頻道、記得準時發」這三件事自動
 | 發文紀錄 | 所有貼文與每個頻道的發送結果，可搜尋、依狀態／類型／群組篩選、匯出 CSV。 |
 | 行事曆 | 月曆同時顯示發文、上課與截止時間；桌機上把排程拖到別天就能改期。 |
 | 撤回與修改 | 發錯可以一鍵從 Discord 撤回，或直接修改已發送訊息（Discord 會顯示「已編輯」）。 |
-| 準時代發 | GitHub 的排程在尖峰可能延遲幾分鐘；網站開著時，時間一到由瀏覽器直接送出。 |
+| 準時發送 | 免費的外部定時器每 5 分鐘叫醒排程器，排程器會等到指定時間才送出；網站開著時，時間一到也會由瀏覽器直接送出。 |
 | 端對端加密 | 貼文、頻道 Webhook、設定都用 AES-256-GCM 加密後才存到公開 repo。 |
 | 多裝置 | 在設定頁產生「裝置連結」QR Code，手機掃描就能使用同一份資料。 |
 | 不重複、不漏發 | 發送前先用 Git 的版本比對「認領」貼文，排程器與多台裝置同時運作也只會送出一次；Discord 暫時故障會自動重試，狀態不明時交給老師確認。 |
 
 ---
 
-## 上線步驟（第一次，約 10 分鐘）
+## 上線步驟（第一次，約 15 分鐘）
 
 ### 1. 開啟 GitHub Pages
 
@@ -85,7 +85,20 @@ https://discord.com/api/webhooks/…
 
 接著按「送出測試訊息」到**測試區**確認連線，就完成了。
 
-### 4. 其他裝置
+### 4. 設定準時發送（外部定時器，約 5 分鐘）
+
+GitHub 內建的定時排程對新 repo 常常好幾個小時才跑一次（實測約每 3～5 小時），所以要用免費的 [cron-job.org](https://cron-job.org/) 每 5 分鐘叫醒排程器。網站「**設定 → 準時發送設定**」有可直接複製的內容：
+
+1. 建立一個**只給定時器用**的 Fine-grained Token：Repository access 只選這個 repo，權限只要 **Actions：Read and write**（碰不到資料）。
+2. 在 cron-job.org 建立 cronjob：
+   - URL：`https://api.github.com/repos/tndaixd2026-dot/TNDA/actions/workflows/scheduler.yml/dispatches`
+   - Execution schedule：Every 5 minutes
+   - ADVANCED → Request method：`POST`
+   - Headers：`Authorization: Bearer <定時器 Token>`、`Accept: application/vnd.github+json`
+   - Request body：`{"ref":"<預設分支>","inputs":{"reason":"cron"}}`（網站上會顯示實際的分支名稱）
+3. 5 分鐘後，「設定 → 準時發送設定」右上角會顯示「運作中」。
+
+### 5. 其他裝置
 
 在已設定的裝置打開 **設定 → 連結其他裝置**，用手機掃 QR Code；或在新裝置選「我已經在其他裝置設定過」，輸入 Token 與同步金鑰。
 
@@ -137,7 +150,7 @@ flowchart LR
 ## 常見問題
 
 **排程時間到了，但還沒發出去？**
-GitHub 的定時排程在尖峰時段可能延遲 5～15 分鐘。網站開著時會「準時代發」；也可以在「設定 → 排程器」按「立即執行一次」。
+先確認「設定 → 準時發送設定」顯示「運作中」。沒有外部定時器時，GitHub 內建排程可能好幾個小時才跑一次。網站開著時會「準時代發」；也可以在「設定 → 排程器」按「立即執行一次」。
 
 **Actions 頁面寫「TNDA_SYNC_KEY 與資料不符」？**
 到網站「設定 → 排程器 → 重新設定排程器金鑰」。

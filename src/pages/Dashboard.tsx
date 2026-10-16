@@ -3,6 +3,7 @@ import { DAY_MS, WEEKDAYS, fmtCountdown, fmtDateTime, fmtLong, fmtRelative, same
 import { Btn, ChannelChips, Empty, StatusPill, TypeTag, askConfirm } from '../ui/kit.tsx';
 import { Icon } from '../ui/icons.tsx';
 import { PostRow } from '../ui/PostRow.tsx';
+import { SCHEDULER_STALE_MS } from '../data/setup.ts';
 import { deliveryOf } from '../core/delivery.ts';
 import type { Post } from '../core/types.ts';
 
@@ -39,6 +40,8 @@ export function Dashboard() {
     .sort((a, b) => Date.parse(b.sentAt!) - Date.parse(a.sentAt!))
     .slice(0, 5);
   const lastRun = scheduler.runs[0];
+  // 外部定時器每 5 分鐘觸發一次；超過 20 分鐘沒有執行，代表貼文可能會延遲
+  const stale = mode === 'github' && !!lastRun && now - Date.parse(lastRun.created_at) > SCHEDULER_STALE_MS;
   const configured = channels.filter((c) => c.webhook).length;
 
   return (
@@ -175,13 +178,14 @@ export function Dashboard() {
                     ? `上次執行 ${fmtRelative(Date.parse(lastRun.updated_at), now)}${lastRun.status !== 'completed' ? '（執行中）' : ''}`
                     : scheduler.error
                       ? '讀不到執行紀錄（Token 可能沒有 Actions 權限）'
-                      : '每 5 分鐘自動檢查一次'}
+                      : '還沒有執行紀錄'}
+                  {stale ? '。間隔太久，排程貼文可能會晚發，請到「設定」完成「準時發送設定」。' : ''}
                 </div>
               </div>
               {lastRun ? (
-                <span class={`pill ${lastRun.conclusion === 'success' || lastRun.status !== 'completed' ? 'pill-ok' : 'pill-bad'}`}>
+                <span class={`pill ${lastRun.status === 'completed' && lastRun.conclusion !== 'success' ? 'pill-bad' : stale ? 'pill-warn' : 'pill-ok'}`}>
                   <span class="dot" />
-                  {lastRun.status !== 'completed' ? '執行中' : lastRun.conclusion === 'success' ? '正常' : '失敗'}
+                  {lastRun.status !== 'completed' ? '執行中' : lastRun.conclusion !== 'success' ? '失敗' : stale ? '延遲' : '正常'}
                 </span>
               ) : (
                 <span class="pill">
@@ -190,6 +194,14 @@ export function Dashboard() {
                 </span>
               )}
             </div>
+            {stale ? (
+              <div class="health-row" style={{ paddingTop: 0, borderTop: 0 }}>
+                <span style={{ width: 18 }} />
+                <Btn size="sm" icon="sliders" onClick={() => navigate('settings')}>
+                  前往準時發送設定
+                </Btn>
+              </div>
+            ) : null}
             <div class="health-row">
               <Icon name="zap" />
               <div class="h-main">

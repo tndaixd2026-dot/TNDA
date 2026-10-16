@@ -382,7 +382,7 @@ export function Setup() {
             <div class="callout">
               <Icon name="info" />
               <span>
-                排程器由 <code class="inline">.github/workflows/scheduler.yml</code> 每 5 分鐘執行。若 repo 的 Actions 尚未啟用，請到 repo 的 Actions 分頁按下啟用。
+                <b>最後一步：</b>進入網站後到「設定 → 準時發送設定」，用免費的 cron-job.org 每 5 分鐘叫醒排程器（約 5 分鐘設定）。GitHub 內建的定時排程常常好幾個小時才跑一次，沒有這一步，網站沒開著時貼文可能會晚發。
               </span>
             </div>
           </div>

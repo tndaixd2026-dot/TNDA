@@ -98,7 +98,7 @@ export function About() {
         <div class="card card-pad">
           <h3 style={{ fontSize: 16, marginBottom: 6 }}>使用上的限制</h3>
           <ul class="small muted" style={{ margin: 0, paddingLeft: '1.2em' }}>
-            <li>GitHub 排程在尖峰可能延遲幾分鐘；網站開著時會準時代發</li>
+            <li>GitHub 內建排程不穩定，需搭配免費的外部定時器（cron-job.org）才能準時；網站開著時會準時代發</li>
             <li>圖片需使用網址，暫不支援直接上傳檔案</li>
             <li>同步金鑰遺失就無法解開資料，請務必備份</li>
           </ul>

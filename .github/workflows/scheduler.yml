@@ -1,4 +1,6 @@
 # 每 5 分鐘檢查一次，把到期的貼文發到 Discord。
+# GitHub 內建的定時排程對新 repo 常常好幾個小時才跑一次，所以建議另外用免費的
+# cron-job.org 每 5 分鐘以 workflow_dispatch（reason=cron）觸發，設定方式見網站「設定 → 準時發送設定」。
 # 需要的 Secret：TNDA_SYNC_KEY（網站的初始設定精靈會自動幫你設定）。
 # 公開 repo 的 Actions 不限分鐘數，這個排程完全免費。
 # GitHub 的定時排程在尖峰時段可能延遲數分鐘；網站上的「立即執行」會透過 workflow_dispatch 立刻觸發。
@@ -36,8 +38,8 @@ jobs:
         env:
           TNDA_SYNC_KEY: ${{ secrets.TNDA_SYNC_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
-          # 排程觸發時，會等待並準時發送接下來 4.5 分鐘內到期的貼文
-          TNDA_LOOKAHEAD_SECONDS: ${{ github.event_name == 'schedule' && '270' || '0' }}
+          # 定時觸發（GitHub 排程或外部定時器）時，會等待並準時發送接下來 4.5 分鐘內到期的貼文
+          TNDA_LOOKAHEAD_SECONDS: ${{ (github.event_name == 'schedule' || inputs.reason == 'cron') && '270' || '0' }}
         run: node scripts/scheduler.ts
       - name: 保持排程啟用
         # 公開 repo 連續 60 天沒有活動時，GitHub 會停用排程；每天呼叫一次 enable 讓它維持運作

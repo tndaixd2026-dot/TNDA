@@ -61,6 +61,28 @@ export async function storeSyncKeySecret(client: GitHubClient, syncKey: string):
   await client.putActionsSecret(SECRET_NAME, encryptSecretValue(syncKey, pk.key), pk.key_id);
 }
 
+/** 外部定時器專用的 Token：只有觸發排程器的權限，就算外洩也碰不到資料 */
+export function cronTokenUrl(owner: string, repo: string): string {
+  const params = new URLSearchParams({
+    name: `TNDA Relay 定時器（${repo}）`,
+    description: '只用來每 5 分鐘觸發 TNDA Relay 排程器',
+    target_name: owner,
+    actions: 'write',
+  });
+  return `https://github.com/settings/personal-access-tokens/new?${params}`;
+}
+
+export function dispatchUrl(owner: string, repo: string): string {
+  return `https://api.github.com/repos/${owner}/${repo}/actions/workflows/scheduler.yml/dispatches`;
+}
+
+export function dispatchBody(branch: string): string {
+  return JSON.stringify({ ref: branch, inputs: { reason: 'cron' } });
+}
+
+/** 排程器多久沒跑就算延遲（外部定時器每 5 分鐘一次） */
+export const SCHEDULER_STALE_MS = 20 * 60 * 1000;
+
 export function tokenCreateUrl(owner: string, repo: string): string {
   const params = new URLSearchParams({
     name: `TNDA Relay（${repo}）`,
