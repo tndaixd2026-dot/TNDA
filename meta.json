@@ -1,0 +1,11 @@
+{
+  "app": "tnda-relay",
+  "schema": 1,
+  "createdAt": "2026-10-16T02:24:16.089Z",
+  "keyCheck": {
+    "tnda": 1,
+    "alg": "A256GCM",
+    "iv": "r2F3br+X0QGdk2B8",
+    "ct": "2fUjX6+lmkPVSymGDX4YwgXESbrsASJKQ0EY93KKhut5A+txB9FTSoRV"
+  }
+}
