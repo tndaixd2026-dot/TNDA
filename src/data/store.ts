@@ -17,7 +17,7 @@ import { GitHubBackend } from './backend-github.ts';
 import { DEMO_ONLY, clearConfig, loadConfig, parseDeviceLink, saveConfig, type DeviceConfig } from './config.ts';
 import { IdbBlobCache } from './idb.ts';
 
-export type Page = 'dashboard' | 'compose' | 'queue' | 'history' | 'calendar' | 'channels' | 'settings' | 'about';
+export type Page = 'dashboard' | 'compose' | 'queue' | 'history' | 'calendar' | 'channels' | 'settings' | 'about' | 'import';
 
 export interface Route {
   page: Page;
@@ -55,7 +55,39 @@ export interface AppState {
   highlight: string[];
 }
 
-const PAGES: Page[] = ['dashboard', 'compose', 'queue', 'history', 'calendar', 'channels', 'settings', 'about'];
+const PAGES: Page[] = ['dashboard', 'compose', 'queue', 'history', 'calendar', 'channels', 'settings', 'about', 'import'];
+
+const IMPORT_KEY = 'tnda-relay:pending-import';
+
+/** 匯入連結的內容先暫存起來（重新整理也不會不見），網址改回短的 #import */
+function stashImport(data: string) {
+  try {
+    sessionStorage.setItem(IMPORT_KEY, data);
+  } catch {
+    /* 無法使用 sessionStorage 時只留在網址上 */
+  }
+  try {
+    history.replaceState(null, '', location.pathname + location.search + '#import');
+  } catch {
+    /* 忽略 */
+  }
+}
+
+export function pendingImport(): string | null {
+  try {
+    return sessionStorage.getItem(IMPORT_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function clearPendingImport() {
+  try {
+    sessionStorage.removeItem(IMPORT_KEY);
+  } catch {
+    /* 忽略 */
+  }
+}
 
 function routeFromHash(): Route {
   let hash = '';
@@ -63,6 +95,10 @@ function routeFromHash(): Route {
     hash = location.hash.replace(/^#/, '');
   } catch {
     /* 無法讀取網址 */
+  }
+  if (hash.startsWith('import=')) {
+    stashImport(hash.slice('import='.length));
+    return { page: 'import' };
   }
   const edit = /^edit-([\w-]+)$/.exec(hash);
   if (edit) return { page: 'compose', editId: edit[1] };
@@ -524,6 +560,28 @@ export async function submitPlan(plan: SchedulePlan): Promise<boolean> {
     navigate('queue');
   }
   return true;
+}
+
+/** 批次匯入：依序建立貼文；中途失敗時保留已建立的，並回報建立了幾則 */
+export async function importPosts(posts: Post[], onProgress: (done: number) => void): Promise<{ created: number; error?: string }> {
+  if (!backend) return { created: 0, error: '尚未連線' };
+  const created: Post[] = [];
+  let error: string | undefined;
+  for (const p of posts) {
+    try {
+      await backend.createPost(p);
+      created.push(p);
+      onProgress(created.length);
+    } catch (err) {
+      error = (err as Error).message;
+      break;
+    }
+  }
+  if (created.length) {
+    upsertLocal(created);
+    setState({ highlight: created.map((p) => p.id) });
+  }
+  return { created: created.length, error };
 }
 
 /** 更新尚未發送的貼文 */

@@ -36,12 +36,22 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+      # 用 git 取出加密資料，排程器直接讀檔，不必每個檔案都呼叫一次 API（GITHUB_TOKEN 每小時只有 1000 次）
+      - name: 取出資料分支
+        uses: actions/checkout@v5
+        continue-on-error: true
+        with:
+          ref: tnda-data
+          path: .tnda-data
+          fetch-depth: 1
+          persist-credentials: false
       - name: 發送
         env:
           TNDA_SYNC_KEY: ${{ secrets.TNDA_SYNC_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
           # 定時觸發（GitHub 排程或外部定時器）時，會等待並準時發送接下來 4.5 分鐘內到期的貼文
           TNDA_LOOKAHEAD_SECONDS: ${{ (github.event_name == 'schedule' || inputs.reason == 'cron') && '270' || '0' }}
+          TNDA_DATA_DIR: .tnda-data
         run: node scripts/scheduler.ts
       - name: 保持排程啟用
         # 公開 repo 連續 60 天沒有活動時，GitHub 會停用排程；每天呼叫一次 enable 讓它維持運作

@@ -215,6 +215,11 @@ export function Compose() {
           </p>
         </div>
         <div class="page-actions">
+          {!source ? (
+            <Btn variant="ghost" icon="upload" onClick={() => navigate('import')}>
+              批次匯入
+            </Btn>
+          ) : null}
           <Btn variant="ghost" icon="left" onClick={() => history.length > 1 ? history.back() : navigate('queue')}>
             返回
           </Btn>
@@ -228,7 +233,7 @@ export function Compose() {
             <div class="section-title">
               <span class="step">01</span>
               貼上內容
-              <span class="hint">隨手貼上就好，日期、時間、地點、連結會自動辨識</span>
+              <span class="hint">{draft.style === 'raw' ? '原文模式：這段文字會照原樣發送' : '隨手貼上就好，日期、時間、地點、連結會自動辨識'}</span>
             </div>
             <textarea
               ref={rawRef}
@@ -310,31 +315,40 @@ export function Compose() {
               </div>
               <div class="field">
                 <label for="f-title">
-                  標題 <span class="char-count">{draft.title.length}/{LIMITS.title - 3}</span>
+                  {draft.style === 'raw' ? '名稱（只顯示在網站上，不會發出）' : '標題'} <span class="char-count">{draft.title.length}/{LIMITS.title - 3}</span>
                 </label>
                 <input id="f-title" class="input" value={draft.title} placeholder={TYPE_META[draft.type].label} onInput={(e) => set('title', (e.currentTarget as HTMLInputElement).value)} />
               </div>
-              <div class="field">
-                <label for="f-body">內文</label>
-                <textarea id="f-body" class="textarea" rows={4} value={draft.body} onInput={(e) => set('body', (e.currentTarget as HTMLTextAreaElement).value)} />
-                <span class="help">支援 Discord 格式：**粗體**、*斜體*、- 清單、[文字](網址)</span>
-              </div>
-              <div class="grid-3">
-                <DateField id="f-event" label={draft.type === 'makeup' ? '補課時間' : draft.type === 'class' ? '上課時間' : '活動時間'} value={draft.eventAt} onChange={(v) => set('eventAt', v)} />
-                <TimeField id="f-end" label="結束時間" base={draft.eventAt} value={draft.eventEnd} onChange={(v) => set('eventEnd', v)} />
-                <DateField id="f-deadline" label={draft.type === 'form' ? '填寫期限' : '截止時間'} value={draft.deadline} onChange={(v) => set('deadline', v)} />
-              </div>
-              <div class="grid-2">
-                <div class="field">
-                  <label for="f-loc">地點</label>
-                  <input id="f-loc" class="input" value={draft.location ?? ''} placeholder="例如：302 教室、線上" onInput={(e) => set('location', (e.currentTarget as HTMLInputElement).value)} />
+              {draft.style === 'raw' ? (
+                <div class="callout">
+                  <Icon name="info" />
+                  <span>原文模式：上方「貼上內容」會照原樣發到 Discord，不加標題與欄位。內文裡的身分組標註（例如 {'<@&123…>'}）會照常通知。</span>
                 </div>
-                <div class="field">
-                  <label for="f-notes">注意事項</label>
-                  <input id="f-notes" class="input" value={draft.notes ?? ''} placeholder="例如：請攜帶筆電" onInput={(e) => set('notes', (e.currentTarget as HTMLInputElement).value)} />
-                </div>
-              </div>
-              <LinksEditor links={draft.links} onChange={(l) => set('links', l)} />
+              ) : (
+                <>
+                  <div class="field">
+                    <label for="f-body">內文</label>
+                    <textarea id="f-body" class="textarea" rows={4} value={draft.body} onInput={(e) => set('body', (e.currentTarget as HTMLTextAreaElement).value)} />
+                    <span class="help">支援 Discord 格式：**粗體**、*斜體*、- 清單、[文字](網址)</span>
+                  </div>
+                  <div class="grid-3">
+                    <DateField id="f-event" label={draft.type === 'makeup' ? '補課時間' : draft.type === 'class' ? '上課時間' : '活動時間'} value={draft.eventAt} onChange={(v) => set('eventAt', v)} />
+                    <TimeField id="f-end" label="結束時間" base={draft.eventAt} value={draft.eventEnd} onChange={(v) => set('eventEnd', v)} />
+                    <DateField id="f-deadline" label={draft.type === 'form' ? '填寫期限' : '截止時間'} value={draft.deadline} onChange={(v) => set('deadline', v)} />
+                  </div>
+                  <div class="grid-2">
+                    <div class="field">
+                      <label for="f-loc">地點</label>
+                      <input id="f-loc" class="input" value={draft.location ?? ''} placeholder="例如：302 教室、線上" onInput={(e) => set('location', (e.currentTarget as HTMLInputElement).value)} />
+                    </div>
+                    <div class="field">
+                      <label for="f-notes">注意事項</label>
+                      <input id="f-notes" class="input" value={draft.notes ?? ''} placeholder="例如：請攜帶筆電" onInput={(e) => set('notes', (e.currentTarget as HTMLInputElement).value)} />
+                    </div>
+                  </div>
+                  <LinksEditor links={draft.links} onChange={(l) => set('links', l)} />
+                </>
+              )}
               <details>
                 <summary class="small" style={{ cursor: 'pointer', color: 'var(--ink-2)' }}>
                   更多選項（樣式、標註、圖片）
@@ -344,7 +358,7 @@ export function Compose() {
                     <span class="small muted" style={{ minWidth: 56 }}>
                       樣式
                     </span>
-                    <Seg label="訊息樣式" value={draft.style} onChange={(v) => set('style', v)} options={[{ value: 'embed', label: '卡片' }, { value: 'text', label: '純文字' }]} />
+                    <Seg label="訊息樣式" value={draft.style} onChange={(v) => set('style', v)} options={[{ value: 'embed', label: '卡片' }, { value: 'text', label: '純文字' }, { value: 'raw', label: '原文' }]} />
                   </div>
                   <div class="row">
                     <span class="small muted" style={{ minWidth: 56 }}>
@@ -361,13 +375,17 @@ export function Compose() {
                       ]}
                     />
                   </div>
-                  <Switch id="f-countdown" checked={draft.showCountdown} onChange={(v) => set('showCountdown', v)}>
-                    在時間下方顯示倒數（例如「3 天後」，Discord 會自動更新）
-                  </Switch>
-                  <div class="field">
-                    <label for="f-img">圖片網址（選填）</label>
-                    <input id="f-img" class="input mono" value={draft.imageUrl ?? ''} placeholder="https://…" onInput={(e) => set('imageUrl', (e.currentTarget as HTMLInputElement).value)} />
-                  </div>
+                  {draft.style !== 'raw' ? (
+                    <>
+                      <Switch id="f-countdown" checked={draft.showCountdown} onChange={(v) => set('showCountdown', v)}>
+                        在時間下方顯示倒數（例如「3 天後」，Discord 會自動更新）
+                      </Switch>
+                      <div class="field">
+                        <label for="f-img">圖片網址（選填）</label>
+                        <input id="f-img" class="input mono" value={draft.imageUrl ?? ''} placeholder="https://…" onInput={(e) => set('imageUrl', (e.currentTarget as HTMLInputElement).value)} />
+                      </div>
+                    </>
+                  ) : null}
                 </div>
               </details>
             </div>

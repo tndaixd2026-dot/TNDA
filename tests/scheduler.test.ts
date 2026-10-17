@@ -7,6 +7,10 @@ import type { Channel, Post } from '../src/core/types.ts';
 import { DEFAULT_SETTINGS } from '../src/core/types.ts';
 import { runScheduler } from '../scripts/scheduler.ts';
 import { createFakeDiscord, createFakeGitHub, webhook, webhookId } from './fakes.ts';
+import { blobCacheFromDir, gitBlobSha } from '../scripts/local-cache.ts';
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
 
 const T0 = new Date('2026-10-14T12:00:00Z');
 
@@ -233,6 +237,49 @@ describe('排程器', () => {
     const text = s.gh.readText(DEFAULT_DATA_BRANCH, PATHS.post('p1'))!;
     expect(text).not.toContain('作業');
     expect(s.gh.readText(DEFAULT_DATA_BRANCH, PATHS.channels)).not.toContain('discord.com');
+  });
+});
+
+describe('排程器讀取 git 取出的資料', () => {
+  async function checkout(s: Awaited<ReturnType<typeof setup>>) {
+    const dir = await mkdtemp(join(tmpdir(), 'tnda-data-'));
+    for (const path of s.gh.branches.get(DEFAULT_DATA_BRANCH)!.files.keys()) {
+      await mkdir(dirname(join(dir, path)), { recursive: true });
+      await writeFile(join(dir, path), s.gh.readText(DEFAULT_DATA_BRANCH, path)!);
+    }
+    await mkdir(join(dir, '.git'));
+    await writeFile(join(dir, '.git', 'HEAD'), 'ref: refs/heads/tnda-data\n');
+    return dir;
+  }
+  const blobGets = (s: Awaited<ReturnType<typeof setup>>) => s.gh.calls.filter((c) => c.includes('/git/blobs/')).length;
+
+  it('blob sha 與 git 相同', () => {
+    expect(gitBlobSha(new Uint8Array())).toBe('e69de29bb2d1d6434b8b29ae775ad8c2e48c5391');
+    expect(gitBlobSha(new TextEncoder().encode('hello\n'))).toBe('ce013625030ba8dba906f756967f9e9ca394464a');
+  });
+
+  it('不再逐一透過 API 下載檔案', async () => {
+    const s = await setup([post('p1', new Date(T0.getTime() + 3600000)), post('p2', new Date(T0.getTime() + 7200000))]);
+    const { cache, files } = await blobCacheFromDir(await checkout(s));
+    expect(files).toBe(6);
+    const before = blobGets(s);
+    const r = await s.run({ cache });
+    expect(r.scanned).toBe(2);
+    expect(blobGets(s)).toBe(before);
+  });
+
+  it('取出後才被修改的檔案改走 API，不會讀到舊資料', async () => {
+    const s = await setup([post('p1', new Date(T0.getTime() + 3600000))]);
+    const { cache } = await blobCacheFromDir(await checkout(s));
+    await s.repo.updatePost('p1', (p) => ({ ...p, sendAt: new Date(T0.getTime() - 1000).toISOString() }));
+    const before = blobGets(s);
+    const r = await s.run({ cache });
+    expect(r.sent).toBe(1);
+    expect(blobGets(s)).toBe(before + 1);
+  });
+
+  it('資料夾不存在時回傳空快取', async () => {
+    expect((await blobCacheFromDir(join(tmpdir(), 'tnda-not-here'))).files).toBe(0);
   });
 });
 

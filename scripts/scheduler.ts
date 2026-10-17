@@ -3,11 +3,12 @@
 // 注意：公開 repo 的 Actions 紀錄所有人都看得到，所以這裡只印出貼文代號與狀態，不印內容。
 
 import { GitHubClient } from '../src/core/github.ts';
-import { DEFAULT_DATA_BRANCH, GitHubDataRepo, KeyMismatchError, NotInitializedError } from '../src/core/repo.ts';
+import { type BlobCache, DEFAULT_DATA_BRANCH, GitHubDataRepo, KeyMismatchError, NotInitializedError } from '../src/core/repo.ts';
 import { executeWebhook, type SendResult } from '../src/core/discord.ts';
 import { isDue, recoverStale } from '../src/core/delivery.ts';
 import { channelMap, sendPost } from '../src/core/engine.ts';
 import type { DiscordPayload } from '../src/core/types.ts';
+import { blobCacheFromDir } from './local-cache.ts';
 
 export interface SchedulerOptions {
   client: GitHubClient;
@@ -20,6 +21,8 @@ export interface SchedulerOptions {
   send?: (url: string, payload: DiscordPayload) => Promise<SendResult>;
   log?: (msg: string) => void;
   runId?: string;
+  /** 預先讀好的加密檔（依 blob sha），可以省下 API 呼叫 */
+  cache?: BlobCache;
 }
 
 export interface SchedulerReport {
@@ -54,7 +57,7 @@ export async function runScheduler(opts: SchedulerOptions): Promise<SchedulerRep
     skipped: [],
   };
 
-  const repo = await GitHubDataRepo.open(opts.client, opts.syncKey, { branch: opts.branch ?? DEFAULT_DATA_BRANCH });
+  const repo = await GitHubDataRepo.open(opts.client, opts.syncKey, { branch: opts.branch ?? DEFAULT_DATA_BRANCH, cache: opts.cache });
   let snapshot;
   try {
     snapshot = await repo.load();
@@ -154,12 +157,18 @@ async function main() {
     return;
   }
   const client = new GitHubClient({ owner, repo: repoName, token: env.GITHUB_TOKEN, baseUrl: env.GITHUB_API_URL });
+  let cache: BlobCache | undefined;
+  if (env.TNDA_DATA_DIR) {
+    const local = await blobCacheFromDir(env.TNDA_DATA_DIR);
+    if (local.files) cache = local.cache;
+  }
   const report = await runScheduler({
     client,
     syncKey,
     branch: env.TNDA_DATA_BRANCH || DEFAULT_DATA_BRANCH,
     lookaheadMs: Number(env.TNDA_LOOKAHEAD_SECONDS ?? 0) * 1000,
     runId: env.GITHUB_RUN_ID,
+    cache,
   });
   if (report.status === 'not-initialized') {
     console.log('::notice title=TNDA Relay::資料分支尚未建立，請先在網站完成初始設定。');

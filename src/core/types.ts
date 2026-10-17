@@ -77,7 +77,7 @@ export interface DiscordPayload {
   username?: string;
   avatar_url?: string;
   embeds?: DiscordEmbed[];
-  allowed_mentions?: { parse: Array<'everyone' | 'roles' | 'users'> };
+  allowed_mentions?: { parse: Array<'everyone' | 'roles' | 'users'>; roles?: string[]; users?: string[] };
 }
 
 export interface LinkItem {
@@ -91,7 +91,8 @@ export type MentionMode = 'none' | 'everyone' | 'here';
 export interface ComposeDraft {
   raw: string;
   type: PostType;
-  style: 'embed' | 'text';
+  /** embed：卡片；text：純文字；raw：原文照發（不加標題與欄位） */
+  style: 'embed' | 'text' | 'raw';
   title: string;
   body: string;
   eventAt?: string;

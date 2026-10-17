@@ -12,6 +12,7 @@ import { CalendarPage } from './pages/Calendar.tsx';
 import { Channels } from './pages/Channels.tsx';
 import { SettingsPage } from './pages/Settings.tsx';
 import { About } from './pages/About.tsx';
+import { ImportPage } from './pages/Import.tsx';
 import { PostDetail } from './pages/PostDetail.tsx';
 import { Welcome, LinkConfirm, ErrorScreen, Loader } from './pages/Welcome.tsx';
 import { Setup } from './pages/Setup.tsx';
@@ -181,6 +182,7 @@ function Shell() {
         {page === 'channels' && <Channels />}
         {page === 'settings' && <SettingsPage />}
         {page === 'about' && <About />}
+        {page === 'import' && <ImportPage />}
       </main>
 
       <nav class="tabbar" aria-label="分頁">

@@ -3062,3 +3062,191 @@ code.inline {
   font-size: 16px;
   margin-bottom: 4px;
 }
+
+/* ───────────────────────── 批次匯入 ───────────────────────── */
+
+.imp-drop {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 22px 18px;
+  border: 2px dashed var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.imp-drop:hover,
+.imp-drop:focus-within {
+  border-color: var(--ink);
+}
+
+.imp-drop b {
+  margin-right: 4px;
+}
+
+.imp-h {
+  font-size: 15px;
+  margin: 14px 0 10px;
+}
+
+.imp-map {
+  display: grid;
+  gap: 8px;
+}
+
+.imp-map-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.2fr);
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+
+.imp-map-row.bad {
+  background: var(--danger-soft);
+}
+
+.imp-map-from {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.imp-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.imp-row {
+  display: grid;
+  grid-template-columns: auto 88px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+
+.imp-row.off {
+  background: var(--surface-2);
+}
+
+.imp-row.off .imp-title label {
+  color: var(--ink-3);
+}
+
+.imp-check {
+  width: 18px;
+  height: 18px;
+  margin: 3px 0 0;
+  accent-color: var(--ink);
+}
+
+.imp-when {
+  display: flex;
+  flex-direction: column;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+
+.imp-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.imp-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-weight: 700;
+}
+
+.imp-title label {
+  cursor: pointer;
+}
+
+.imp-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.imp-toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--brand-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.imp-toggle .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.imp-raw {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.imp-bar {
+  position: sticky;
+  bottom: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg, 0 8px 24px rgb(0 0 0 / 0.12));
+}
+
+@media (max-width: 640px) {
+  .imp-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .imp-row .imp-main {
+    grid-column: 1 / -1;
+  }
+
+  .imp-map-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .imp-map-row > .icon {
+    display: none;
+  }
+
+  .imp-bar {
+    bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+  }
+}

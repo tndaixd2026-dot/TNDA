@@ -36,6 +36,24 @@ const RULES: Rule[] = [
     ),
   },
   {
+    re: /^<(https?:\/\/[^\s>]+)>/,
+    render: (m, c) => (
+      <a key={c.key++} class="dc-link" href={m[1]} target="_blank" rel="noopener noreferrer">
+        {m[1]}
+      </a>
+    ),
+  },
+  {
+    re: /^<@&(\d+)>/,
+    render: (m, c) => (
+      <span key={c.key++} class="dc-mention" title={`身分組 ${m[1]}`}>
+        @身分組
+      </span>
+    ),
+  },
+  { re: /^<@!?(\d+)>/, render: (m, c) => <span key={c.key++} class="dc-mention" title={`成員 ${m[1]}`}>@成員</span> },
+  { re: /^<#(\d+)>/, render: (m, c) => <span key={c.key++} class="dc-mention" title={`頻道 ${m[1]}`}>#頻道</span> },
+  {
     re: /^https?:\/\/[^\s<]+[^\s<.,:;"')\]!?。，]/,
     render: (m, c) => (
       <a key={c.key++} class="dc-link" href={m[0]} target="_blank" rel="noopener noreferrer">

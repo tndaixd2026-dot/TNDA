@@ -69,6 +69,18 @@ export function draftFields(d: ComposeDraft): DiscordEmbedField[] {
   return fields;
 }
 
+/** 只通知原文裡明確標註的身分組與成員（@everyone／@here 也照原文） */
+export function mentionsIn(content: string): NonNullable<DiscordPayload['allowed_mentions']> {
+  const ids = (re: RegExp) => [...new Set([...content.matchAll(re)].map((m) => m[1]))].slice(0, 100);
+  const roles = ids(/<@&(\d+)>/g);
+  const users = ids(/<@!?(\d+)>/g);
+  return {
+    parse: /@(everyone|here)\b/.test(content) ? ['everyone'] : [],
+    ...(roles.length ? { roles } : {}),
+    ...(users.length ? { users } : {}),
+  };
+}
+
 export function composePayload(d: ComposeDraft, settings: Settings): DiscordPayload {
   const meta = TYPE_META[d.type];
   const mentionText = d.mention === 'everyone' ? '@everyone' : d.mention === 'here' ? '@here' : '';
@@ -78,6 +90,13 @@ export function composePayload(d: ComposeDraft, settings: Settings): DiscordPayl
     avatar_url: settings.avatarUrl || undefined,
     allowed_mentions: { parse: mentionText ? ['everyone'] : [] },
   };
+
+  if (d.style === 'raw') {
+    const text = d.raw.trim();
+    payload.content = mentionText ? `${mentionText}\n${text}` : text;
+    payload.allowed_mentions = mentionsIn(payload.content);
+    return payload;
+  }
 
   if (d.style === 'text') {
     const parts: string[] = [];
