@@ -16,7 +16,18 @@ import { DEMO_ONLY, buildDeviceLink } from '../data/config.ts';
 import { fmtDateTime, fmtRelative } from '../core/time.ts';
 import { Btn, Modal, Seg, Switch, askConfirm, copyText, downloadText } from '../ui/kit.tsx';
 import { Icon } from '../ui/icons.tsx';
-import { SCHEDULER_STALE_MS, cronTokenUrl, dispatchBody, dispatchUrl, makeClient, storeSyncKeySecret } from '../data/setup.ts';
+import {
+  RUN_SOURCE_LABEL,
+  SCHEDULER_STALE_MS,
+  bareToken,
+  cronTokenUrl,
+  dispatchBody,
+  dispatchUrl,
+  makeClient,
+  runSource,
+  storeSyncKeySecret,
+  testCronToken,
+} from '../data/setup.ts';
 import { SECRET_NAME } from '../core/repo.ts';
 
 export function SettingsPage() {
@@ -206,7 +217,7 @@ export function SettingsPage() {
                     </span>
                     <div>
                       <div>
-                        {fmtDateTime(r.created_at)} <span class="faint small">· {r.event === 'schedule' ? 'GitHub 定時' : '外部定時器／手動'}</span>
+                        {fmtDateTime(r.created_at)} <span class="faint small">· {RUN_SOURCE_LABEL[runSource(r)]}</span>
                       </div>
                       <div class="small muted">{running ? '執行中' : ok ? '完成' : `失敗（${r.conclusion}）`}</div>
                     </div>
@@ -370,18 +381,28 @@ function DeviceLinkModal({ onClose }: { onClose: () => void }) {
 function CronSetup() {
   const { config, runs } = useApp((s) => ({ config: s.config, runs: s.scheduler.runs }));
   const [branch, setBranch] = useState('');
+  const [cronToken, setCronToken] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [test, setTest] = useState<{ ok: boolean; message: string } | null>(null);
   useEffect(() => {
     makeClient(config.owner, config.repo, config.token)
       .getRepo()
       .then((r) => setBranch(r.default_branch))
       .catch(() => setBranch(''));
   }, [config.owner, config.repo, config.token]);
-  const recentDispatch = runs.find((r) => r.event === 'workflow_dispatch' && Date.now() - Date.parse(r.created_at) < SCHEDULER_STALE_MS);
+  const working = runs.some((r) => runSource(r) === 'cron' && Date.now() - Date.parse(r.created_at) < SCHEDULER_STALE_MS);
   const url = dispatchUrl(config.owner, config.repo);
   const body = dispatchBody(branch || '（讀取中…）');
+  const token = bareToken(cronToken);
   const copy = async (text: string, label: string) => {
     const ok = await copyText(text);
     toast(ok ? 'ok' : 'error', ok ? `已複製${label}` : '無法複製，請手動選取');
+  };
+  const runTest = async () => {
+    setTesting(true);
+    setTest(await testCronToken(config.owner, config.repo, cronToken, branch));
+    setTesting(false);
+    setTimeout(() => void refreshScheduler(), 8000);
   };
   return (
     <section class="card card-pad stack" style={{ gridColumn: '1 / -1' }}>
@@ -392,9 +413,9 @@ function CronSetup() {
             GitHub 內建的定時排程對新 repo 常常好幾個小時才跑一次。用免費的 cron-job.org 每 5 分鐘叫醒排程器，貼文就會準時發出，網站不用開著。只需要設定一次。
           </p>
         </div>
-        <span class={`pill ${recentDispatch ? 'pill-ok' : 'pill-warn'}`}>
+        <span class={`pill ${working ? 'pill-ok' : 'pill-warn'}`}>
           <span class="dot" />
-          {recentDispatch ? '運作中' : '尚未偵測到'}
+          {working ? '運作中' : '尚未偵測到'}
         </span>
       </div>
       <ol class="ol">
@@ -406,14 +427,41 @@ function CronSetup() {
           ，Repository access 只選 <code class="inline">{config.owner}/{config.repo}</code>，權限只要 <b>Actions：Read and write</b>，Expiration 選一年。這個 Token 只能叫醒排程器，碰不到你的資料。
         </li>
         <li>
+          把 Token 貼在這裡按「測試」，先確認它能叫醒排程器（只用來測試，不會儲存）：
+          <div class="row" style={{ marginTop: 8, gap: 8 }}>
+            <input
+              class="input mono"
+              type="password"
+              autocomplete="off"
+              aria-label="定時器 Token"
+              placeholder="github_pat_…"
+              style={{ flex: '1 1 220px', minWidth: 0 }}
+              value={cronToken}
+              onInput={(e) => {
+                setCronToken((e.currentTarget as HTMLInputElement).value);
+                setTest(null);
+              }}
+            />
+            <Btn size="sm" icon="zap" busy={testing} disabled={!token || !branch} onClick={() => void runTest()}>
+              測試
+            </Btn>
+          </div>
+          {test ? (
+            <div class={`callout ${test.ok ? 'callout-ok' : 'callout-bad'}`} role="status" style={{ marginTop: 8 }}>
+              <Icon name={test.ok ? 'check' : 'alert'} />
+              <span>{test.message}</span>
+            </div>
+          ) : null}
+        </li>
+        <li>
           到{' '}
           <a href="https://cron-job.org/" target="_blank" rel="noopener noreferrer">
             cron-job.org
           </a>{' '}
-          免費註冊，按「CREATE CRONJOB」：
+          免費註冊，按「CREATE CRONJOB」照下表填寫。Request method、Headers、Request body 在「ADVANCED」分頁：
         </li>
       </ol>
-      <div class="perm-table" style={{ gridTemplateColumns: 'auto minmax(0, 1fr) auto', alignItems: 'center' }}>
+      <div class="perm-table cron-table">
         <b>URL</b>
         <code class="inline">{url}</code>
         <Btn size="sm" variant="ghost" iconOnly icon="copy" onClick={() => void copy(url, '網址')}>
@@ -423,25 +471,49 @@ function CronSetup() {
         <span>Every 5 minutes</span>
         <span />
         <b>Request method</b>
-        <span>POST（在 ADVANCED 分頁）</span>
+        <span>
+          <b>POST</b>（預設是 GET，一定要改）
+        </span>
         <span />
         <b>Headers</b>
         <span>
-          <code class="inline">Authorization</code>：<code class="inline">Bearer 剛剛建立的 Token</code>
+          <code class="inline">Authorization</code>：<code class="inline">Bearer 定時器 Token</code>（Bearer 後面空一格）
           <br />
           <code class="inline">Accept</code>：<code class="inline">application/vnd.github+json</code>
         </span>
-        <Btn size="sm" variant="ghost" iconOnly icon="copy" onClick={() => void copy('application/vnd.github+json', ' Accept 內容')}>
-          複製 Accept
-        </Btn>
+        <span class="row" style={{ gap: 2, flexWrap: 'nowrap' }}>
+          <Btn
+            size="sm"
+            variant="ghost"
+            iconOnly
+            icon="copy"
+            disabled={!token}
+            title={token ? undefined : '先在第 2 步貼上 Token'}
+            onClick={() => void copy(`Bearer ${token}`, ' Authorization 內容（含 Token）')}
+          >
+            複製 Authorization 內容
+          </Btn>
+          <Btn size="sm" variant="ghost" iconOnly icon="copy" onClick={() => void copy('application/vnd.github+json', ' Accept 內容')}>
+            複製 Accept 內容
+          </Btn>
+        </span>
         <b>Request body</b>
         <code class="inline">{body}</code>
         <Btn size="sm" variant="ghost" iconOnly icon="copy" disabled={!branch} onClick={() => void copy(body, '內容')}>
           複製內容
         </Btn>
       </div>
-      <ol class="ol" start={3}>
-        <li>儲存後等 5 分鐘，上方「排程器」的紀錄會開始出現「外部定時器」，右上角會變成「運作中」。</li>
+      <div class="callout">
+        <Icon name="info" />
+        <span>這個網址是給 cron-job.org 呼叫的，不是網頁。直接用瀏覽器打開會顯示「404 Not Found」，這是正常的。</span>
+      </div>
+      <ol class="ol" start={4}>
+        <li>
+          存檔後在 cron-job.org 按「TEST RUN」或看「History」：顯示 <b>204</b> 就是成功。5 分鐘內，上方「排程器」的紀錄會出現「外部定時器」，右上角會變成「運作中」。
+        </li>
+        <li>
+          其他代碼：<b>401</b> Token 貼錯或 Bearer 後面沒空格；<b>403</b> Token 權限不足；<b>404</b> 網址打錯、Request method 不是 POST，或 Token 沒選到這個 repo；<b>422</b> Request body 打錯。
+        </li>
       </ol>
     </section>
   );

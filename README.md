@@ -90,13 +90,16 @@ https://discord.com/api/webhooks/…
 GitHub 內建的定時排程對新 repo 常常好幾個小時才跑一次（實測約每 3～5 小時），所以要用免費的 [cron-job.org](https://cron-job.org/) 每 5 分鐘叫醒排程器。網站「**設定 → 準時發送設定**」有可直接複製的內容：
 
 1. 建立一個**只給定時器用**的 Fine-grained Token：Repository access 只選這個 repo，權限只要 **Actions：Read and write**（碰不到資料）。
-2. 在 cron-job.org 建立 cronjob：
+2. 把 Token 貼到「準時發送設定」按 **測試**，先確認它能叫醒排程器。測試失敗時，網站會說明是哪裡設錯。
+3. 在 cron-job.org 建立 cronjob：
    - URL：`https://api.github.com/repos/tndaixd2026-dot/TNDA/actions/workflows/scheduler.yml/dispatches`
    - Execution schedule：Every 5 minutes
-   - ADVANCED → Request method：`POST`
+   - ADVANCED → Request method：`POST`（預設是 GET，一定要改）
    - Headers：`Authorization: Bearer <定時器 Token>`、`Accept: application/vnd.github+json`
    - Request body：`{"ref":"<預設分支>","inputs":{"reason":"cron"}}`（網站上會顯示實際的分支名稱）
-3. 5 分鐘後，「設定 → 準時發送設定」右上角會顯示「運作中」。
+4. 存檔後按 **TEST RUN**，顯示 **204** 就是成功。5 分鐘內，「設定 → 準時發送設定」右上角會顯示「運作中」。
+
+> 上面的 URL 是給 cron-job.org 呼叫的，不是網頁：直接用瀏覽器打開會顯示 `404 Not Found`，這是正常的。
 
 ### 5. 其他裝置
 
@@ -151,6 +154,9 @@ flowchart LR
 
 **排程時間到了，但還沒發出去？**
 先確認「設定 → 準時發送設定」顯示「運作中」。沒有外部定時器時，GitHub 內建排程可能好幾個小時才跑一次。網站開著時會「準時代發」；也可以在「設定 → 排程器」按「立即執行一次」。
+
+**cron-job.org 的 History 顯示錯誤代碼？**
+`401`：Token 貼錯，或 `Bearer` 後面沒有空一格。`403`：Token 的 Actions 權限不是 Read and write。`404`：URL 打錯、Request method 不是 POST，或 Token 沒選到這個 repo。`422`：Request body 打錯。
 
 **Actions 頁面寫「TNDA_SYNC_KEY 與資料不符」？**
 到網站「設定 → 排程器 → 重新設定排程器金鑰」。

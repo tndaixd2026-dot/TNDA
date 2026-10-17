@@ -5,6 +5,8 @@
 # 公開 repo 的 Actions 不限分鐘數，這個排程完全免費。
 # GitHub 的定時排程在尖峰時段可能延遲數分鐘；網站上的「立即執行」會透過 workflow_dispatch 立刻觸發。
 name: 排程發送
+# 標上觸發來源，網站靠這個判斷外部定時器是否在運作
+run-name: ${{ github.event_name == 'schedule' && '排程發送（GitHub 定時）' || inputs.reason == 'cron' && '排程發送（外部定時器）' || inputs.reason == 'test' && '排程發送（定時器測試）' || '排程發送（手動）' }}
 
 on:
   schedule:

@@ -2918,6 +2918,31 @@ code.inline {
   white-space: nowrap;
 }
 
+.cron-table {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.cron-table code.inline {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .cron-table {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 2px 8px;
+  }
+
+  .cron-table > b {
+    grid-column: 1 / -1;
+    margin-top: 8px;
+  }
+
+  .cron-table > b:first-child {
+    margin-top: 0;
+  }
+}
+
 .center-screen {
   min-height: 100vh;
   display: grid;
