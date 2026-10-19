@@ -1,0 +1,10 @@
+{
+  "tnda": "login",
+  "v": 1,
+  "kdf": "PBKDF2-SHA256",
+  "iter": 600000,
+  "salt": "7ghF1XC3vGASg2aURoknvQ==",
+  "iv": "uopS0N6CMCJG8VDa",
+  "ct": "KmIVR4GNJ1ib5JeOh/Cfz5VJAV1a+eD6fQ545kKbu8ofZtzFcE372IO2k/lsUTQXOoFeHDV4FzdloMPZDWUJZDipZUNCqw5Bb1ajw3ck9GzIHLal1opFiUParVNJsEVebxGefBPoO+rquZOYz4zNAiiD4iLCDmqjt1VpRIwCnI98PNM2PjwODoTLl6JgLIKBGw9RBvPtW+rtTLyURFpyErZsTFcZFzuSRjRgOITYmVmj8UN5GRbqJiYbFQ24MNjsfpCwGqVW7Kblxlkvtp/MKt39vYpwnKe/flM6kGv1cY4jMv8FO13xNR+OiEfgJTw=",
+  "updatedAt": "2026-10-19T04:17:42.841Z"
+}
