@@ -49,8 +49,8 @@ jobs:
         env:
           TNDA_SYNC_KEY: ${{ secrets.TNDA_SYNC_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
-          # 定時觸發（GitHub 排程或外部定時器）時，會等待並準時發送接下來 4.5 分鐘內到期的貼文
-          TNDA_LOOKAHEAD_SECONDS: ${{ (github.event_name == 'schedule' || inputs.reason == 'cron') && '270' || '0' }}
+          # 定時觸發（GitHub 排程或外部定時器）時，會等待並準時發送接下來 5.5 分鐘內到期的貼文（比觸發間隔多 30 秒，整點的貼文不會因為觸發延遲而晚發）
+          TNDA_LOOKAHEAD_SECONDS: ${{ (github.event_name == 'schedule' || inputs.reason == 'cron') && '330' || '0' }}
           TNDA_DATA_DIR: .tnda-data
         run: node scripts/scheduler.ts
       - name: 保持排程啟用
