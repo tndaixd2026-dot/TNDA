@@ -21,6 +21,8 @@ export interface DeviceConfig {
   theme: ThemePref;
   deviceId: string;
   previewTheme: 'dark' | 'light';
+  /** false：只在這次瀏覽期間記住（公用電腦），關掉瀏覽器就登出 */
+  remember: boolean;
 }
 
 const KEY = 'tnda-relay:config';
@@ -52,13 +54,28 @@ export function defaultConfig(): DeviceConfig {
     theme: 'system',
     deviceId: randomDeviceId(),
     previewTheme: 'dark',
+    remember: true,
   };
+}
+
+function readStored(): string | null {
+  try {
+    const persistent = localStorage.getItem(KEY);
+    if (persistent) return persistent;
+  } catch {
+    /* 忽略 */
+  }
+  try {
+    return sessionStorage.getItem(KEY);
+  } catch {
+    return null;
+  }
 }
 
 export function loadConfig(): DeviceConfig {
   const base = defaultConfig();
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = readStored();
     if (!raw) return base;
     const saved = JSON.parse(raw) as Partial<DeviceConfig>;
     const merged = { ...base, ...saved };
@@ -70,18 +87,26 @@ export function loadConfig(): DeviceConfig {
 }
 
 export function saveConfig(cfg: DeviceConfig): void {
+  const [keep, drop] = cfg.remember === false ? ['sessionStorage', 'localStorage'] as const : ['localStorage', 'sessionStorage'] as const;
   try {
-    localStorage.setItem(KEY, JSON.stringify(cfg));
+    window[drop].removeItem(KEY);
+  } catch {
+    /* 忽略 */
+  }
+  try {
+    window[keep].setItem(KEY, JSON.stringify(cfg));
   } catch {
     /* 私密瀏覽等情況無法儲存，僅在本次使用 */
   }
 }
 
 export function clearConfig(): void {
-  try {
-    localStorage.removeItem(KEY);
-  } catch {
-    /* 忽略 */
+  for (const store of ['localStorage', 'sessionStorage'] as const) {
+    try {
+      window[store].removeItem(KEY);
+    } catch {
+      /* 忽略 */
+    }
   }
 }
 

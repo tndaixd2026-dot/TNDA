@@ -1,6 +1,60 @@
-import { acceptLink, beginSetup, connectGitHub, disconnect, rejectLink, startDemo, useApp } from '../data/store.ts';
+import { useState } from 'preact/hooks';
+import { acceptLink, beginSetup, connectGitHub, disconnect, loginWithPassword, rejectLink, startDemo, useApp } from '../data/store.ts';
 import { BrandMark, Icon } from '../ui/icons.tsx';
 import { Btn } from '../ui/kit.tsx';
+
+function PasswordLogin() {
+  const [password, setPassword] = useState('');
+  const [remember, setRemember] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function submit(e: Event) {
+    e.preventDefault();
+    if (!password || busy) return;
+    setBusy(true);
+    setError('');
+    const problem = await loginWithPassword(password, remember);
+    setBusy(false);
+    if (problem) setError(problem);
+  }
+  return (
+    <form class="pw-login stack" onSubmit={(e) => void submit(e)}>
+      <div class="field">
+        <label for="login-pw">
+          <Icon name="lock" style={{ width: 15, height: 15, verticalAlign: '-2px' }} /> 用密碼登入
+        </label>
+        <div class="row" style={{ gap: 8, flexWrap: 'nowrap' }}>
+          <input
+            id="login-pw"
+            class="input"
+            type="password"
+            autocomplete="current-password"
+            value={password}
+            onInput={(e) => {
+              setPassword((e.currentTarget as HTMLInputElement).value);
+              setError('');
+            }}
+            style={{ flex: 1, minWidth: 0 }}
+          />
+          <Btn type="submit" variant="primary" icon="right" busy={busy} disabled={!password}>
+            登入
+          </Btn>
+        </div>
+      </div>
+      <label class="row small" style={{ gap: 8, cursor: 'pointer' }}>
+        <input type="checkbox" checked={remember} onChange={(e) => setRemember((e.currentTarget as HTMLInputElement).checked)} />
+        記住這台裝置（公用電腦請取消，關掉瀏覽器就會登出）
+      </label>
+      {busy ? <p class="small muted">正在解開登入資料…</p> : null}
+      {error ? (
+        <div class="callout callout-bad" role="alert">
+          <Icon name="alert" />
+          <span>{error}</span>
+        </div>
+      ) : null}
+    </form>
+  );
+}
 
 function Postmark() {
   return (
@@ -54,6 +108,10 @@ export function Welcome() {
       </section>
       <section class="welcome-panel">
         <h2 style={{ fontSize: 22 }}>開始使用</h2>
+        <PasswordLogin />
+        <div class="or-divider" role="separator">
+          <span>或</span>
+        </div>
         <button type="button" class="choice" onClick={beginSetup}>
           <span class="c-icon">
             <Icon name="branch" />
@@ -79,8 +137,8 @@ export function Welcome() {
             <Icon name="phone" />
           </span>
           <span>
-            <b>我已經在其他裝置設定過</b>
-            <span>輸入 Token 與同步金鑰，或在已設定的裝置上用「連結其他裝置」掃描 QR Code。</span>
+            <b>用 Token 與同步金鑰登入</b>
+            <span>還沒設定登入密碼、或忘記密碼時使用；也可以在已登入的裝置用「連結其他裝置」掃描 QR Code。</span>
           </span>
           <Icon name="right" />
         </button>

@@ -3,6 +3,7 @@
 import { GitHubClient, GitHubError, type WorkflowRun } from '../core/github.ts';
 import { DEFAULT_DATA_BRANCH, GitHubDataRepo, SCHEDULER_WORKFLOW, SECRET_NAME } from '../core/repo.ts';
 import type { Channel } from '../core/types.ts';
+import { type LoginVault, VAULT_PATH, parseVault } from '../core/vault.ts';
 import { DEFAULT_SETTINGS } from '../core/types.ts';
 
 export interface TokenCheck {
@@ -126,6 +127,22 @@ export async function testCronToken(owner: string, repo: string, rawToken: strin
     };
     return { ok: false, message: hints[status] ?? (err as Error).message };
   }
+}
+
+/** 讀取密碼登入檔；不需要 Token（公開 repo），沒有設定過時回傳 null */
+export async function fetchLoginVault(client: GitHubClient, branch = DEFAULT_DATA_BRANCH): Promise<{ vault: LoginVault; sha: string } | null> {
+  const file = await client.getFile(VAULT_PATH, branch);
+  return file ? { vault: parseVault(file.text), sha: file.sha } : null;
+}
+
+export async function saveLoginVault(client: GitHubClient, vault: LoginVault, branch = DEFAULT_DATA_BRANCH): Promise<void> {
+  const current = await client.getFile(VAULT_PATH, branch);
+  await client.putFile(VAULT_PATH, JSON.stringify(vault, null, 2) + '\n', { branch, message: 'relay: 更新密碼登入', sha: current?.sha });
+}
+
+export async function deleteLoginVault(client: GitHubClient, branch = DEFAULT_DATA_BRANCH): Promise<void> {
+  const current = await client.getFile(VAULT_PATH, branch);
+  if (current) await client.deleteFile(VAULT_PATH, { branch, message: 'relay: 停用密碼登入', sha: current.sha });
 }
 
 export function tokenCreateUrl(owner: string, repo: string): string {

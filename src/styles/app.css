@@ -3250,3 +3250,35 @@ code.inline {
     bottom: calc(76px + env(safe-area-inset-bottom, 0px));
   }
 }
+
+/* ───────────────────────── 密碼登入 ───────────────────────── */
+
+.pw-login {
+  gap: 10px;
+  padding: 16px;
+  border: 2px solid var(--ink);
+  border-radius: var(--r-lg, 16px);
+  background: var(--surface);
+}
+
+.pw-login label[for='login-pw'] {
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.or-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--ink-3);
+  font-size: 13px;
+  margin: 6px 0;
+}
+
+.or-divider::before,
+.or-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line-strong);
+}

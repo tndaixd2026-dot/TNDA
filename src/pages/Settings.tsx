@@ -16,15 +16,19 @@ import { DEMO_ONLY, buildDeviceLink } from '../data/config.ts';
 import { fmtDateTime, fmtRelative } from '../core/time.ts';
 import { Btn, Modal, Seg, Switch, askConfirm, copyText, downloadText } from '../ui/kit.tsx';
 import { Icon } from '../ui/icons.tsx';
+import { MIN_PASSWORD_LENGTH, passwordProblem, sealVault } from '../core/vault.ts';
 import {
   RUN_SOURCE_LABEL,
   SCHEDULER_STALE_MS,
   bareToken,
   cronTokenUrl,
+  deleteLoginVault,
   dispatchBody,
   dispatchUrl,
+  fetchLoginVault,
   makeClient,
   runSource,
+  saveLoginVault,
   storeSyncKeySecret,
   testCronToken,
 } from '../data/setup.ts';
@@ -200,6 +204,8 @@ export function SettingsPage() {
           )}
         </section>
 
+        {github ? <PasswordSetup /> : null}
+
         <section class="card card-pad stack">
           <div>
             <h3>排程器</h3>
@@ -282,6 +288,11 @@ export function SettingsPage() {
               準時代發：網站開著時，到時間就由這台裝置直接發送
             </Switch>
           ) : null}
+          {github ? (
+            <Switch id="s-remember" checked={config.remember !== false} onChange={(v) => updateConfig({ remember: v })}>
+              記住這台裝置（公用電腦請關閉，關掉瀏覽器就會登出）
+            </Switch>
+          ) : null}
           <div class="row">
             <span class="small muted" style={{ minWidth: 72 }}>
               介面主題
@@ -310,15 +321,17 @@ export function SettingsPage() {
                 icon="logout"
                 onClick={async () => {
                   const ok = await askConfirm({
-                    title: github ? '中斷這台裝置的連線？' : '離開 Demo？',
-                    body: github ? '會清除這台裝置上的 Token、同步金鑰與快取。GitHub 上的資料不受影響，之後可以重新連接。請先確認同步金鑰已備份。' : '會清除 Demo 資料並回到起始畫面。',
-                    confirmLabel: github ? '中斷連線' : '離開 Demo',
+                    title: github ? '登出這台裝置？' : '離開 Demo？',
+                    body: github
+                      ? '會清除這台裝置上的 Token、同步金鑰與快取。GitHub 上的資料與排程不受影響，之後可以用登入密碼或同步金鑰重新登入。'
+                      : '會清除 Demo 資料並回到起始畫面。',
+                    confirmLabel: github ? '登出' : '離開 Demo',
                     danger: true,
                   });
                   if (ok) await disconnect();
                 }}
               >
-                {github ? '中斷連線並清除這台裝置的資料' : '離開 Demo'}
+                {github ? '登出並清除這台裝置的資料' : '離開 Demo'}
               </Btn>
             </div>
           ) : null}
@@ -515,6 +528,109 @@ function CronSetup() {
           其他代碼：<b>401</b> Token 貼錯或 Bearer 後面沒空格；<b>403</b> Token 權限不足；<b>404</b> 網址打錯、Request method 不是 POST，或 Token 沒選到這個 repo；<b>422</b> Request body 打錯。
         </li>
       </ol>
+    </section>
+  );
+}
+
+/** 密碼登入：把這台裝置的登入資料用密碼加密後存到資料分支，其他裝置輸入密碼就能登入 */
+function PasswordSetup() {
+  const config = useApp((s) => s.config);
+  const [status, setStatus] = useState<{ updatedAt: string } | null | undefined>(undefined);
+  const [pw, setPw] = useState('');
+  const [pw2, setPw2] = useState('');
+  const [busy, setBusy] = useState(false);
+  const client = () => makeClient(config.owner, config.repo, config.token);
+  useEffect(() => {
+    fetchLoginVault(client(), config.branch)
+      .then((f) => setStatus(f ? { updatedAt: f.vault.updatedAt } : null))
+      .catch(() => setStatus(null));
+  }, [config.owner, config.repo, config.token, config.branch]);
+  const problem = pw ? passwordProblem(pw) : null;
+  const mismatch = !!pw2 && pw !== pw2;
+  const ready = !!pw && !problem && pw === pw2;
+
+  async function save() {
+    if (!ready || busy) return;
+    setBusy(true);
+    try {
+      const vault = await sealVault(pw, { owner: config.owner, repo: config.repo, branch: config.branch, token: config.token, syncKey: config.syncKey });
+      await saveLoginVault(client(), vault, config.branch);
+      setStatus({ updatedAt: vault.updatedAt });
+      setPw('');
+      setPw2('');
+      toast('ok', status ? '已更新登入密碼' : '已設定登入密碼，其他裝置可以用密碼登入了');
+    } catch (err) {
+      toast('error', `設定失敗：${(err as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    const ok = await askConfirm({
+      title: '停用密碼登入？',
+      body: '其他裝置將無法再用密碼登入，需要改用 Token 與同步金鑰。已經登入的裝置不受影響。',
+      confirmLabel: '停用',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await deleteLoginVault(client(), config.branch);
+      setStatus(null);
+      toast('ok', '已停用密碼登入');
+    } catch (err) {
+      toast('error', `停用失敗：${(err as Error).message}`);
+    }
+  }
+
+  return (
+    <section class="card card-pad stack">
+      <div class="row" style={{ alignItems: 'flex-start' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h3>登入密碼</h3>
+          <p class="small muted">設定後，在任何裝置打開網站、輸入密碼就能登入，不用再貼 Token 與同步金鑰。</p>
+        </div>
+        {status === undefined ? null : (
+          <span class={`pill ${status ? 'pill-ok' : 'pill-warn'}`}>
+            <span class="dot" />
+            {status ? '已設定' : '尚未設定'}
+          </span>
+        )}
+      </div>
+      {status ? <p class="small muted">上次更新：{fmtDateTime(status.updatedAt, true)}</p> : null}
+      <div class="grid-2">
+        <div class="field">
+          <label for="pw-new">{status ? '新密碼' : '密碼'}</label>
+          <input id="pw-new" class="input" type="password" autocomplete="new-password" value={pw} onInput={(e) => setPw((e.currentTarget as HTMLInputElement).value)} />
+        </div>
+        <div class="field">
+          <label for="pw-again">再輸入一次</label>
+          <input id="pw-again" class="input" type="password" autocomplete="new-password" value={pw2} onInput={(e) => setPw2((e.currentTarget as HTMLInputElement).value)} />
+        </div>
+      </div>
+      {problem || mismatch ? (
+        <p class="small" role="alert" style={{ color: 'var(--danger-text)' }}>
+          {problem ?? '兩次輸入的密碼不一樣'}
+        </p>
+      ) : (
+        <p class="small faint">至少 {MIN_PASSWORD_LENGTH} 個字，建議用一句話（例如「TNDA課務每週一中午發」），不要和其他網站共用。</p>
+      )}
+      <div class="row">
+        <Btn variant="primary" icon="lock" busy={busy} disabled={!ready} onClick={() => void save()}>
+          {status ? '更新密碼' : '設定密碼'}
+        </Btn>
+        {status ? (
+          <Btn variant="ghost" onClick={() => void remove()}>
+            停用密碼登入
+          </Btn>
+        ) : null}
+      </div>
+      <div class="callout">
+        <Icon name="shield" />
+        <span>
+          Token 與同步金鑰會用這組密碼加密後存在 GitHub。因為 repo 是公開的，密碼越長越安全。更換 Token 或同步金鑰後，請重新設定一次密碼；忘記密碼時，用同步金鑰登入後再設定新的即可。
+        </span>
+      </div>
     </section>
   );
 }

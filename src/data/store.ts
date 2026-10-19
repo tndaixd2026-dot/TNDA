@@ -4,8 +4,9 @@ import { useEffect, useState } from 'preact/hooks';
 import type { Channel, ComposeDraft, Post, Repeat, Settings } from '../core/types.ts';
 import { DEFAULT_SETTINGS } from '../core/types.ts';
 import type { WorkflowRun } from '../core/github.ts';
-import { GitHubError } from '../core/github.ts';
-import { KeyMismatchError, NotInitializedError } from '../core/repo.ts';
+import { GitHubClient, GitHubError } from '../core/github.ts';
+import { DEFAULT_DATA_BRANCH, KeyMismatchError, NotInitializedError } from '../core/repo.ts';
+import { WrongPasswordError, openVault } from '../core/vault.ts';
 import { computeStatus, isDue, deliveryOf } from '../core/delivery.ts';
 import { channelMap, sendPost } from '../core/engine.ts';
 import { randomId } from '../core/crypto.ts';
@@ -16,6 +17,7 @@ import { DemoBackend } from './backend-demo.ts';
 import { GitHubBackend } from './backend-github.ts';
 import { DEMO_ONLY, clearConfig, loadConfig, parseDeviceLink, saveConfig, type DeviceConfig } from './config.ts';
 import { IdbBlobCache } from './idb.ts';
+import { fetchLoginVault } from './setup.ts';
 
 export type Page = 'dashboard' | 'compose' | 'queue' | 'history' | 'calendar' | 'channels' | 'settings' | 'about' | 'import';
 
@@ -324,6 +326,28 @@ function describeBootError(err: unknown): AppState['error'] {
     return { title: 'GitHub Token 無法使用', detail: err.message, kind: 'token' };
   if (err instanceof GitHubError && err.status === 0) return { title: '連不上 GitHub', detail: err.message, kind: 'network' };
   return { title: '載入失敗', detail: (err as Error).message ?? String(err) };
+}
+
+/** 用密碼解開資料分支上的登入檔並連線；失敗時回傳給使用者看的原因 */
+export async function loginWithPassword(password: string, remember: boolean): Promise<string | null> {
+  const { owner, repo, branch } = state.config;
+  let found;
+  try {
+    found = await fetchLoginVault(new GitHubClient({ owner, repo }), branch || DEFAULT_DATA_BRANCH);
+  } catch (err) {
+    if (err instanceof GitHubError && err.status === 403) return 'GitHub 暫時限制了查詢次數，請過幾分鐘再試。';
+    return `無法讀取登入資料：${(err as Error).message}`;
+  }
+  if (!found) return '這個網站還沒有設定登入密碼。請先用 Token 與同步金鑰登入，再到「設定 → 登入密碼」設定。';
+  let secrets;
+  try {
+    secrets = await openVault(password, found.vault);
+  } catch (err) {
+    return err instanceof WrongPasswordError ? '密碼不正確。' : (err as Error).message;
+  }
+  updateConfig({ ...secrets, mode: 'github', remember });
+  await connectGitHub();
+  return null;
 }
 
 export async function disconnect() {
