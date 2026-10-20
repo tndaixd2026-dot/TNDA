@@ -9,6 +9,7 @@ import { DAY_MS, atTime, fmtDateTime, fmtLong, fromInputValue, toInputValue, tpP
 import { editSentPost, navigate, submitPlan, updateConfig, updatePlan, useApp, useNow } from '../data/store.ts';
 import { Btn, Seg, Switch, askConfirm } from '../ui/kit.tsx';
 import { Icon } from '../ui/icons.tsx';
+import { PollEditor } from '../ui/PollEditor.tsx';
 import { DiscordPreview } from '../ui/DiscordPreview.tsx';
 
 type WhenMode = 'at' | 'chain' | 'now';
@@ -349,6 +350,15 @@ export function Compose() {
                   <LinksEditor links={draft.links} onChange={(l) => set('links', l)} />
                 </>
               )}
+              <PollEditor
+                poll={draft.poll}
+                locked={editSent}
+                onChange={(p) => {
+                  set('poll', p);
+                  // 投票不能和卡片一起發
+                  if (p && draft.style === 'embed') set('style', 'text');
+                }}
+              />
               <details>
                 <summary class="small" style={{ cursor: 'pointer', color: 'var(--ink-2)' }}>
                   更多選項（樣式、標註、圖片）

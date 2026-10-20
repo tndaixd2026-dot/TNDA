@@ -3,8 +3,8 @@
 // 所以不需要知道 Webhook，也不需要同步金鑰。
 
 import { base64ToBytes, bytesToBase64 } from '../core/crypto.ts';
-import type { Channel, Post, PostType } from '../core/types.ts';
-import { POST_TYPES } from '../format/composer.ts';
+import type { Channel, PollDraft, Post, PostType } from '../core/types.ts';
+import { POST_TYPES, splitAnswer } from '../format/composer.ts';
 
 export interface ChannelRef {
   /** 直接指定頻道代號 */
@@ -25,6 +25,8 @@ export interface ImportItem {
   content: string;
   /** 匯入前要提醒使用者的事 */
   note?: string;
+  /** 附加的投票 */
+  poll?: PollDraft;
 }
 
 export interface ImportBundle {
@@ -55,17 +57,49 @@ export function parseImportBundle(text: string): ImportBundle {
     const p = (raw ?? {}) as Record<string, unknown>;
     const n = `第 ${i + 1} 則`;
     const content = typeof p.content === 'string' ? p.content.trim() : '';
-    if (!content) throw new ImportError(`${n}沒有內容。`);
+    const poll = p.poll === undefined || p.poll === null ? undefined : toPoll(p.poll, n);
+    if (!content && !poll) throw new ImportError(`${n}沒有內容。`);
     const at = typeof p.at === 'string' ? p.at : '';
     if (!at || Number.isNaN(Date.parse(at))) throw new ImportError(`${n}的發送時間格式不正確。`);
     const to = Array.isArray(p.to) ? (p.to as unknown[]).map(toRef).filter((r): r is ChannelRef => !!r) : [];
     if (!to.length) throw new ImportError(`${n}沒有指定頻道。`);
-    const title = (typeof p.title === 'string' && p.title.trim()) || firstLine(content);
+    const title = (typeof p.title === 'string' && p.title.trim()) || (content ? firstLine(content) : `📊 ${poll!.question}`);
     const type = POST_TYPES.includes(p.type as PostType) ? (p.type as PostType) : 'announce';
     const note = typeof p.note === 'string' && p.note.trim() ? p.note.trim() : undefined;
-    return { title: title.slice(0, 120), type, at: new Date(at).toISOString(), to, content, note };
+    return { title: title.slice(0, 120), type, at: new Date(at).toISOString(), to, content, note, ...(poll ? { poll } : {}) };
   });
   return { name: typeof obj.name === 'string' ? obj.name : undefined, posts };
+}
+
+const DURATION_RE = /^(\d+(?:\.\d+)?)\s*(h|hr|hours?|小時|d|days?|天|w|weeks?|週|周)$/i;
+
+/** 投票：answers 可以是字串（開頭的 emoji 會自動拆出來）或 { text, emoji }；時間用 hours 或 duration（例如 "3d"、"24h"、"1週"） */
+function toPoll(raw: unknown, n: string): PollDraft {
+  const p = (raw ?? {}) as Record<string, unknown>;
+  const question = typeof p.question === 'string' ? p.question.trim() : '';
+  if (!question) throw new ImportError(`${n}的投票沒有問題。`);
+  const answers = (Array.isArray(p.answers) ? p.answers : []).map((a) => {
+    if (typeof a === 'string') return splitAnswer(a);
+    const o = (a ?? {}) as Record<string, unknown>;
+    const text = typeof o.text === 'string' ? o.text.trim() : '';
+    const emoji = typeof o.emoji === 'string' && o.emoji.trim() ? o.emoji.trim() : undefined;
+    return emoji ? { text, emoji } : splitAnswer(text);
+  });
+  if (answers.length < 2) throw new ImportError(`${n}的投票至少要有 2 個選項。`);
+  let hours = 24;
+  if (typeof p.hours === 'number') hours = p.hours;
+  else if (typeof p.duration === 'number') hours = p.duration;
+  else if (typeof p.duration === 'string') {
+    const m = DURATION_RE.exec(p.duration.trim());
+    if (!m) throw new ImportError(`${n}的投票時間看不懂：${p.duration}（例如 24h、3d、1w）`);
+    const unit = m[2].toLowerCase();
+    const mult = /^(d|day|days|天)$/.test(unit) ? 24 : /^(w|week|weeks|週|周)$/.test(unit) ? 168 : 1;
+    hours = Number(m[1]) * mult;
+  }
+  hours = Math.round(hours);
+  if (hours < 1 || hours > 768) throw new ImportError(`${n}的投票時間要在 1 小時到 32 天之間。`);
+  const multi = p.multi === true || p.multiselect === true || p.allow_multiselect === true;
+  return { question, answers, hours, multi };
 }
 
 function toRef(raw: unknown): ChannelRef | null {

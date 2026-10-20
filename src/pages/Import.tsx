@@ -86,7 +86,7 @@ export function ImportPage() {
     if (!bundle) return [];
     return bundle.posts.map((item, index) => {
       const targets = resolveTargets(item, mapping);
-      const draft = { ...emptyDraft(settings), raw: item.content, type: item.type, style: 'raw' as const, title: item.title, mention: 'none' as const, showCountdown: false };
+      const draft = { ...emptyDraft(settings), raw: item.content, type: item.type, style: 'raw' as const, title: item.title, mention: 'none' as const, showCountdown: false, poll: item.poll };
       const post = targets ? buildPost(draft, targets, item.at) : null;
       const row: Row = { index, item, targets, post };
       const errors = validatePayload(composePayload(draft, settings));
@@ -325,6 +325,7 @@ function ImportRow({ row, checked, onToggle, channels, theme }: { row: Row; chec
           {row.targets ? <ChannelChips ids={row.targets} channels={channels} /> : <span class="small faint">{item.to.map(refLabel).join('、')}</span>}
           {row.blocked ? <span class="pill pill-bad">{row.blocked}</span> : null}
           {row.duplicate ? <span class="pill pill-warn">已經排過，預設略過</span> : null}
+          {item.poll ? <span class="pill">📊 投票・{item.poll.multi ? '可複選' : '單選'}</span> : null}
         </div>
         {item.note ? (
           <div class="callout callout-warn small">

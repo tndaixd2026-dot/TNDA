@@ -28,7 +28,13 @@ export const LIMITS = {
   embedTotal: 6000,
   embeds: 10,
   username: 80,
+  pollQuestion: 300,
+  pollAnswer: 55,
+  pollAnswers: 10,
+  pollHours: 768,
 };
+
+const SINGLE_EMOJI = /^\p{Extended_Pictographic}(?:\uFE0F|\u20E3|\p{Emoji_Modifier}|\u200D\p{Extended_Pictographic}\uFE0F?)*$/u;
 
 export function payloadLength(p: DiscordPayload): number {
   let total = 0;
@@ -45,7 +51,21 @@ export function validatePayload(p: DiscordPayload): string[] {
   const errors: string[] = [];
   const content = p.content ?? '';
   const embeds = p.embeds ?? [];
-  if (!content.trim() && embeds.length === 0) errors.push('訊息內容是空的');
+  if (!content.trim() && embeds.length === 0 && !p.poll) errors.push('訊息內容是空的');
+  if (p.poll) {
+    const poll = p.poll;
+    if (!poll.question.text.trim()) errors.push('投票還沒有填問題');
+    if (poll.question.text.length > LIMITS.pollQuestion) errors.push(`投票問題超過 ${LIMITS.pollQuestion} 字`);
+    if (poll.answers.length < 2) errors.push('投票至少要有 2 個選項');
+    if (poll.answers.length > LIMITS.pollAnswers) errors.push(`投票最多 ${LIMITS.pollAnswers} 個選項`);
+    for (const a of poll.answers) {
+      if (!a.poll_media.text.trim()) errors.push('有投票選項沒有文字');
+      if (a.poll_media.text.length > LIMITS.pollAnswer) errors.push(`投票選項「${a.poll_media.text.slice(0, 10)}…」超過 ${LIMITS.pollAnswer} 字`);
+      if (a.poll_media.emoji && !SINGLE_EMOJI.test(a.poll_media.emoji.name)) errors.push(`投票選項的圖示只能放一個 emoji（目前是「${a.poll_media.emoji.name}」）`);
+    }
+    if (!Number.isInteger(poll.duration) || poll.duration < 1 || poll.duration > LIMITS.pollHours) errors.push('投票時間要在 1 小時到 32 天之間');
+    if (embeds.length) errors.push('投票不能和卡片樣式一起發，請把樣式改成「純文字」或「原文」');
+  }
   if (content.length > LIMITS.content) errors.push(`訊息文字超過 ${LIMITS.content} 字（目前 ${content.length}）`);
   if (embeds.length > LIMITS.embeds) errors.push(`卡片數量超過 ${LIMITS.embeds} 張`);
   if (p.username && p.username.length > LIMITS.username) errors.push(`發送者名稱超過 ${LIMITS.username} 字`);
@@ -139,8 +159,8 @@ export async function editWebhookMessage(
   payload: DiscordPayload,
   fetchImpl: FetchLike = fetch,
 ): Promise<SendResult> {
-  // 編輯時不能修改發送者名稱與頭像
-  const { username: _u, avatar_url: _a, ...rest } = payload;
+  // 編輯時不能修改發送者名稱、頭像與投票
+  const { username: _u, avatar_url: _a, poll: _p, ...rest } = payload;
   const res = await fetchImpl(`${url.replace(/\/$/, '')}/messages/${messageId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },

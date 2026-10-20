@@ -72,8 +72,19 @@ export interface DiscordEmbed {
   fields?: DiscordEmbedField[];
 }
 
+/** Discord 投票（Webhook 的 poll 欄位） */
+export interface DiscordPoll {
+  question: { text: string };
+  answers: Array<{ poll_media: { text: string; emoji?: { name: string } } }>;
+  /** 開放幾小時，最多 768（32 天） */
+  duration: number;
+  allow_multiselect: boolean;
+  layout_type?: number;
+}
+
 export interface DiscordPayload {
   content?: string;
+  poll?: DiscordPoll;
   username?: string;
   avatar_url?: string;
   embeds?: DiscordEmbed[];
@@ -86,6 +97,13 @@ export interface LinkItem {
 }
 
 export type MentionMode = 'none' | 'everyone' | 'here';
+
+export interface PollDraft {
+  question: string;
+  answers: Array<{ text: string; emoji?: string }>;
+  hours: number;
+  multi: boolean;
+}
 
 /** 編輯器的結構化內容；發送用的 payload 由它產生。 */
 export interface ComposeDraft {
@@ -104,6 +122,8 @@ export interface ComposeDraft {
   imageUrl?: string;
   mention: MentionMode;
   showCountdown: boolean;
+  /** 附加的投票（沒有就是 undefined） */
+  poll?: PollDraft;
 }
 
 export interface Repeat {

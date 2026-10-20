@@ -91,3 +91,30 @@ describe('匯入連結', () => {
     await expect(decodeImportData('abc')).rejects.toThrow('格式不正確');
   });
 });
+
+describe('匯入投票', () => {
+  const poll = { question: '你對 TouchDesigner 的熟悉程度？', answers: ['🛠️ 有使用 TD 做過專案', { emoji: '🏫', text: '過去學校有上過 TD 相關課程' }, '❓ 這是啥？'], duration: '3d' };
+  it('讀取投票，字串選項自動拆出 emoji', () => {
+    const b = parseImportBundle(bundle([{ ...item, poll }]));
+    expect(b.posts[0].poll).toEqual({
+      question: '你對 TouchDesigner 的熟悉程度？',
+      answers: [{ emoji: '🛠️', text: '有使用 TD 做過專案' }, { emoji: '🏫', text: '過去學校有上過 TD 相關課程' }, { emoji: '❓', text: '這是啥？' }],
+      hours: 72,
+      multi: false,
+    });
+  });
+  it('時間可以寫小時或「1週」，可複選', () => {
+    expect(parseImportBundle(bundle([{ ...item, poll: { ...poll, duration: undefined, hours: 8, multi: true } }])).posts[0].poll).toMatchObject({ hours: 8, multi: true });
+    expect(parseImportBundle(bundle([{ ...item, poll: { ...poll, duration: '1週' } }])).posts[0].poll?.hours).toBe(168);
+  });
+  it('只有投票沒有內文也可以，標題用問題', () => {
+    const b = parseImportBundle(bundle([{ ...item, title: '', content: '', poll }]));
+    expect(b.posts[0].title).toBe('📊 你對 TouchDesigner 的熟悉程度？');
+  });
+  it('投票格式錯誤時說明原因', () => {
+    expect(() => parseImportBundle(bundle([{ ...item, poll: { ...poll, question: '' } }]))).toThrow('沒有問題');
+    expect(() => parseImportBundle(bundle([{ ...item, poll: { ...poll, answers: ['只有一個'] } }]))).toThrow('至少要有 2 個選項');
+    expect(() => parseImportBundle(bundle([{ ...item, poll: { ...poll, duration: '下週' } }]))).toThrow('看不懂');
+    expect(() => parseImportBundle(bundle([{ ...item, poll: { ...poll, duration: '40d' } }]))).toThrow('32 天');
+  });
+});

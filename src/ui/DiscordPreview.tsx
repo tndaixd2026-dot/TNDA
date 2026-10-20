@@ -1,7 +1,8 @@
 // 模擬 Discord 訊息的樣子，讓老師在發送前就看到學生會看到什麼。
 
 import type { JSX } from 'preact';
-import type { Channel, DiscordEmbed, DiscordPayload } from '../core/types.ts';
+import type { Channel, DiscordEmbed, DiscordPayload, DiscordPoll } from '../core/types.ts';
+import { pollDurationLabel } from '../format/composer.ts';
 import { DiscordMarkdown } from '../format/markdown.tsx';
 import { fmtTime, sameTpDay, addDays, fmtDate } from '../core/time.ts';
 
@@ -45,6 +46,25 @@ function Fields({ embed, refTime }: { embed: DiscordEmbed; refTime: number }) {
           </div>
         ));
       })}
+    </div>
+  );
+}
+
+function Poll({ poll }: { poll: DiscordPoll }) {
+  return (
+    <div class="dc-poll">
+      <div class="dc-poll-q">{poll.question.text || '（還沒有填問題）'}</div>
+      <div class="dc-poll-hint">{poll.allow_multiselect ? '選擇一個或多個答案' : '選擇一個答案'}</div>
+      <div class="dc-poll-opts">
+        {poll.answers.map((a, i) => (
+          <div key={i} class="dc-poll-opt">
+            {a.poll_media.emoji ? <span class="emo">{a.poll_media.emoji.name}</span> : null}
+            <span class="txt">{a.poll_media.text}</span>
+            <span class={`mark ${poll.allow_multiselect ? 'multi' : ''}`} aria-hidden="true" />
+          </div>
+        ))}
+      </div>
+      <div class="dc-poll-foot">0 票 · 剩餘 {pollDurationLabel(poll.duration)}</div>
     </div>
   );
 }
@@ -116,6 +136,7 @@ export function DiscordPreview({
             <span class="dc-stamp">{stamp(at)}</span>
           </div>
           {payload.content ? <DiscordMarkdown text={payload.content} refTime={at} /> : null}
+          {payload.poll ? <Poll poll={payload.poll} /> : null}
           {(payload.embeds ?? []).map((e, i) => (
             <Embed key={i} embed={e} refTime={at} />
           ))}

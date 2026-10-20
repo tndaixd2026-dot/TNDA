@@ -1,6 +1,6 @@
 // 把結構化內容組成 Discord Webhook 訊息（卡片或純文字兩種樣式）。
 
-import type { ComposeDraft, DiscordEmbed, DiscordEmbedField, DiscordPayload, PostType, Settings } from '../core/types.ts';
+import type { ComposeDraft, DiscordEmbed, DiscordEmbedField, DiscordPayload, DiscordPoll, PollDraft, PostType, Settings } from '../core/types.ts';
 import { DAY_MS, atTime, fmtDate, fmtTime, unix } from '../core/time.ts';
 import type { ParseResult } from './parser.ts';
 
@@ -81,7 +81,66 @@ export function mentionsIn(content: string): NonNullable<DiscordPayload['allowed
   };
 }
 
+/** 投票可選的開放時間（小時），與 Discord 介面相同 */
+export const POLL_DURATIONS: Array<{ hours: number; label: string }> = [
+  { hours: 1, label: '1 小時' },
+  { hours: 4, label: '4 小時' },
+  { hours: 8, label: '8 小時' },
+  { hours: 24, label: '1 天' },
+  { hours: 72, label: '3 天' },
+  { hours: 168, label: '1 週' },
+  { hours: 336, label: '2 週' },
+];
+
+export function pollDurationLabel(hours: number): string {
+  const preset = POLL_DURATIONS.find((d) => d.hours === hours);
+  if (preset) return preset.label;
+  return hours % 24 === 0 ? `${hours / 24} 天` : `${hours} 小時`;
+}
+
+export function emptyPoll(): PollDraft {
+  return { question: '', answers: [{ text: '' }, { text: '' }], hours: 24, multi: false };
+}
+
+const EMOJI_LEAD = /^(\p{Extended_Pictographic}(?:\uFE0F|\u20E3|\p{Emoji_Modifier}|\u200D\p{Extended_Pictographic}\uFE0F?)*)\s*/u;
+
+/** 「🛠️ 有使用 TD 做過專案」→ { emoji: '🛠️', text: '有使用 TD 做過專案' } */
+export function splitAnswer(raw: string): { text: string; emoji?: string } {
+  const s = raw.trim();
+  const m = EMOJI_LEAD.exec(s);
+  if (m && s.length > m[0].length) return { emoji: m[1], text: s.slice(m[0].length).trim() };
+  return { text: s };
+}
+
+export function isSingleEmoji(s: string): boolean {
+  const m = EMOJI_LEAD.exec(s.trim());
+  return !!m && m[0].trim() === s.trim();
+}
+
+function pollPayload(p: PollDraft | undefined): DiscordPoll | undefined {
+  if (!p) return undefined;
+  return {
+    question: { text: p.question.trim() },
+    answers: p.answers
+      .filter((a) => a.text.trim() || a.emoji?.trim())
+      .map((a) => ({ poll_media: { text: a.text.trim(), ...(a.emoji?.trim() ? { emoji: { name: a.emoji.trim() } } : {}) } })),
+    duration: p.hours,
+    allow_multiselect: p.multi,
+    layout_type: 1,
+  };
+}
+
 export function composePayload(d: ComposeDraft, settings: Settings): DiscordPayload {
+  const payload = composeMessage(d, settings);
+  const poll = pollPayload(d.poll);
+  if (poll) {
+    payload.poll = poll;
+    if (!payload.content) delete payload.content;
+  }
+  return payload;
+}
+
+function composeMessage(d: ComposeDraft, settings: Settings): DiscordPayload {
   const meta = TYPE_META[d.type];
   const mentionText = d.mention === 'everyone' ? '@everyone' : d.mention === 'here' ? '@here' : '';
   const title = d.title.trim() || meta.label;

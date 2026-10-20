@@ -3282,3 +3282,88 @@ code.inline {
   height: 1px;
   background: var(--line-strong);
 }
+
+/* ───────────────────────── Discord 投票預覽 ───────────────────────── */
+
+.dc-poll {
+  margin-top: 8px;
+  max-width: 480px;
+  padding: 14px 16px;
+  border-radius: 8px;
+  background: var(--dc-embed);
+  border: 1px solid var(--dc-embed-border);
+  display: grid;
+  gap: 6px;
+}
+
+.dc-poll-q {
+  font-weight: 600;
+  color: var(--dc-head);
+  font-size: 16px;
+}
+
+.dc-poll-hint,
+.dc-poll-foot {
+  font-size: 13px;
+  color: var(--dc-muted);
+}
+
+.dc-poll-opts {
+  display: grid;
+  gap: 8px;
+  margin: 4px 0;
+}
+
+.dc-poll-opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--dc-bg);
+  border: 1px solid var(--dc-embed-border);
+  color: var(--dc-text);
+}
+
+.dc-poll-opt .emo {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.dc-poll-opt .txt {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.dc-poll-opt .mark {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--dc-muted);
+  flex: none;
+}
+
+.dc-poll-opt .mark.multi {
+  border-radius: 4px;
+}
+
+.poll-editor {
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+
+.poll-row {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.poll-emoji {
+  text-align: center;
+  padding-left: 4px;
+  padding-right: 4px;
+}
