@@ -128,6 +128,26 @@ export async function decryptJSON<T>(key: CryptoKey, env: Envelope, aad: string)
   return JSON.parse(decoder.decode(plain)) as T;
 }
 
+const FILE_MAGIC = encoder.encode('TNDAF1');
+
+/** 加密二進位檔案（附檔）：TNDAF1 + 12 bytes IV + 密文，路徑作為 AAD */
+export async function encryptBytes(key: CryptoKey, data: Uint8Array, aad: string): Promise<Uint8Array> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: encoder.encode(aad) }, key, data as BufferSource));
+  const out = new Uint8Array(FILE_MAGIC.length + iv.length + ct.length);
+  out.set(FILE_MAGIC, 0);
+  out.set(iv, FILE_MAGIC.length);
+  out.set(ct, FILE_MAGIC.length + iv.length);
+  return out;
+}
+
+export async function decryptBytes(key: CryptoKey, blob: Uint8Array, aad: string): Promise<Uint8Array> {
+  if (blob.length < FILE_MAGIC.length + 12 || FILE_MAGIC.some((b, i) => blob[i] !== b)) throw new Error('不支援的附檔格式');
+  const iv = blob.subarray(FILE_MAGIC.length, FILE_MAGIC.length + 12);
+  const ct = blob.subarray(FILE_MAGIC.length + 12);
+  return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv as BufferSource, additionalData: encoder.encode(aad) }, key, ct as BufferSource));
+}
+
 export function isEnvelope(value: unknown): value is Envelope {
   const v = value as Envelope;
   return !!v && typeof v === 'object' && v.tnda === 1 && typeof v.iv === 'string' && typeof v.ct === 'string';

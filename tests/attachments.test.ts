@@ -45,13 +45,47 @@ describe('附檔', () => {
   it('加密存到資料分支，讀回來內容相同', async () => {
     const gh = createFakeGitHub();
     const client = new GitHubClient({ owner: 'demo', repo: 'TNDA', token: 't', fetch: gh.fetch });
-    const repo = await GitHubDataRepo.initialize(client, generateSyncKey(), { channels });
+    const key = generateSyncKey();
+    const repo = await GitHubDataRepo.initialize(client, key, { channels });
     const ref = await repo.putAttachment({ name: '行程.png', type: 'image/png', bytes: PNG });
-    expect(ref).toMatchObject({ name: '行程.png', type: 'image/png', size: PNG.length });
-    const text = gh.readText('tnda-data', `files/${ref.id}.json`)!;
-    expect(text).not.toContain('行程');
-    expect(text).toContain('"ct"');
+    expect(ref).toMatchObject({ name: '行程.png', type: 'image/png', size: PNG.length, enc: 'bin' });
+    const blob = gh.readBytes('tnda-data', `files/${ref.id}.bin`)!;
+    expect(blob.subarray(0, 6).toString()).toBe('TNDAF1');
+    // 二進位儲存：只比原檔多檔頭、IV 與驗證碼，不像 base64 會多 1/3
+    expect(blob.length).toBe(PNG.length + 6 + 12 + 16);
+    expect(blob.includes(Buffer.from(PNG))).toBe(false);
     expect((await repo.getAttachment(ref)).bytes).toEqual(PNG);
+    // 重新開啟（從 tree 取得 sha）也讀得到
+    const again = await GitHubDataRepo.open(client, key);
+    await again.load();
+    expect((await again.getAttachment(ref)).bytes).toEqual(PNG);
+  });
+
+  it('附檔換了別的路徑就解不開（路徑綁在密文裡）', async () => {
+    const gh = createFakeGitHub();
+    const client = new GitHubClient({ owner: 'demo', repo: 'TNDA', token: 't', fetch: gh.fetch });
+    const key = generateSyncKey();
+    const repo = await GitHubDataRepo.initialize(client, key, { channels });
+    const a = await repo.putAttachment({ name: 'a.png', type: 'image/png', bytes: PNG });
+    const b = await repo.putAttachment({ name: 'b.png', type: 'image/png', bytes: PNG });
+    const branch = gh.branches.get('tnda-data')!;
+    branch.files.set(`files/${b.id}.bin`, branch.files.get(`files/${a.id}.bin`)!);
+    const fresh = await GitHubDataRepo.open(client, key);
+    await fresh.load();
+    await expect(fresh.getAttachment(b)).rejects.toThrow();
+  });
+
+  it('仍讀得到舊版（JSON + base64）附檔', async () => {
+    const gh = createFakeGitHub();
+    const client = new GitHubClient({ owner: 'demo', repo: 'TNDA', token: 't', fetch: gh.fetch });
+    const key = generateSyncKey();
+    const repo = await GitHubDataRepo.initialize(client, key, { channels });
+    await repo.write('files/fold.json', { name: '舊.png', type: 'image/png', data: Buffer.from(PNG).toString('base64') }, 'old');
+    const ref = { id: 'fold', name: '舊.png', type: 'image/png', size: PNG.length };
+    expect((await repo.getAttachment(ref)).bytes).toEqual(PNG);
+    const fresh = await GitHubDataRepo.open(client, key);
+    await fresh.load();
+    expect((await fresh.getAttachment(ref)).bytes).toEqual(PNG);
   });
 
   it('發送時讀取附檔一起送；讀不到時標記失敗並稍後重試', async () => {
@@ -93,12 +127,14 @@ describe('附檔', () => {
     expect(calls[0].files).toEqual([{ name: 'a.png', type: 'image/png', bytes: PNG }]);
   });
 
-  it('匯入檔可以附 base64 檔案', () => {
+  it('舊版匯入檔的 base64 附檔仍可使用', async () => {
     const b64 = Buffer.from(PNG).toString('base64');
     const bundle = { tnda: 'import', v: 1, posts: [{ title: 't', at: '2026-10-22T12:00:00+08:00', to: [{ id: 'a' }], content: 'x', attachments: [{ name: '01.webp', data: b64 }, { name: 'b.png', type: 'image/png', data: `data:image/png;base64,${b64}` }] }] };
     const files = parseImportBundle(JSON.stringify(bundle)).posts[0].attachments!;
-    expect(files[0]).toEqual({ name: '01.webp', type: 'image/webp', data: b64, size: PNG.length });
-    expect(files[1].data).toBe(b64);
+    expect(files[0]).toMatchObject({ name: '01.webp', type: 'image/webp', size: PNG.length });
+    expect(await files[0].source.read()).toEqual(PNG);
+    // 內容相同的檔案共用同一個來源，只上傳一次
+    expect(files[1].source).toBe(files[0].source);
     expect(() => parseImportBundle(JSON.stringify({ ...bundle, posts: [{ ...bundle.posts[0], attachments: [{ name: 'x' }] }] }))).toThrow('格式不正確');
   });
 });

@@ -1,10 +1,12 @@
 // 批次匯入：把整理好的多則貼文（檔案或連結）一次排進發送排程。
 // 匯入內容只指定「群組／頻道名稱的關鍵字」，對應到實際頻道由使用者在畫面上確認，
 // 所以不需要知道 Webhook，也不需要同步金鑰。
+// 有照片或影片時用 .zip（posts.json＋原始檔案），或把 .json 和檔案一起選取。
 
 import { base64ToBytes, bytesToBase64 } from '../core/crypto.ts';
 import type { Channel, PollDraft, Post, PostType } from '../core/types.ts';
 import { POST_TYPES, splitAnswer } from '../format/composer.ts';
+import { ZipError, isJunkPath, looksLikeZip, normalizePath, readZip } from './zip.ts';
 
 export interface ChannelRef {
   /** 直接指定頻道代號 */
@@ -27,15 +29,25 @@ export interface ImportItem {
   note?: string;
   /** 附加的投票 */
   poll?: PollDraft;
-  /** 附檔（base64），排程時才加密上傳 */
+  /** 附檔，排程時才加密上傳 */
   attachments?: ImportFile[];
 }
 
+/** 附檔的原始檔案：壓縮檔裡的檔案、一起選取的檔案，或舊版匯入檔裡的 base64 */
+export interface ImportBlob {
+  path: string;
+  size: number;
+  type?: string;
+  read(): Promise<Uint8Array>;
+}
+
 export interface ImportFile {
+  /** 發到 Discord 的檔名 */
   name: string;
   type: string;
-  data: string;
   size: number;
+  /** 多則貼文用到同一個檔案時是同一個物件，只需上傳一次 */
+  source: ImportBlob;
 }
 
 export interface ImportBundle {
@@ -48,8 +60,11 @@ export class ImportError extends Error {}
 export const MAX_IMPORT = 200;
 const LINK_PREFIX = 'z.';
 
-/** 讀取並檢查匯入內容（JSON 文字） */
-export function parseImportBundle(text: string): ImportBundle {
+/**
+ * 讀取並檢查匯入內容（JSON 文字）。
+ * files：可被附檔引用的檔案；base：匯入檔所在的資料夾（附檔路徑相對於它）。
+ */
+export function parseImportBundle(text: string, files: ImportBlob[] = [], base = ''): ImportBundle {
   let data: unknown;
   try {
     data = JSON.parse(text.trim().replace(/^﻿/, ''));
@@ -62,6 +77,7 @@ export function parseImportBundle(text: string): ImportBundle {
   }
   if (obj.posts.length === 0) throw new ImportError('匯入檔裡沒有任何貼文。');
   if (obj.posts.length > MAX_IMPORT) throw new ImportError(`一次最多匯入 ${MAX_IMPORT} 則，這份有 ${obj.posts.length} 則。`);
+  const toFile = fileResolver(files, base);
   const posts = obj.posts.map((raw, i): ImportItem => {
     const p = (raw ?? {}) as Record<string, unknown>;
     const n = `第 ${i + 1} 則`;
@@ -121,20 +137,77 @@ function toPoll(raw: unknown, n: string): PollDraft {
   return { question, answers, hours, multi };
 }
 
-function toFile(raw: unknown, label: string): ImportFile {
-  const f = (raw ?? {}) as Record<string, unknown>;
-  const name = typeof f.name === 'string' ? f.name.trim() : '';
-  const data = typeof f.data === 'string' ? f.data.replace(/^data:[^,]*,/, '').replace(/\s+/g, '') : '';
-  if (!name || !data || !/^[A-Za-z0-9+/]+=*$/.test(data)) throw new ImportError(`${label}格式不正確（需要 name 與 base64 的 data）。`);
-  const type = typeof f.type === 'string' && f.type ? f.type : guessType(name);
-  const size = Math.floor((data.length * 3) / 4) - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0);
-  return { name, type, data, size };
+/** 附檔可以寫成路徑字串、{ file, name } 或舊版的 { name, data(base64) } */
+function fileResolver(files: ImportBlob[], base: string) {
+  const byPath = new Map(files.map((f) => [normalizePath(f.path), f]));
+  const inline = new Map<string, ImportBlob>();
+  const find = (ref: string, label: string): ImportBlob => {
+    const path = normalizePath(ref);
+    const hit = byPath.get(normalizePath(base ? `${base}/${ref}` : ref)) ?? byPath.get(path);
+    if (hit) return hit;
+    // 打包方式不同時資料夾可能不一樣，檔名唯一就用它
+    const name = path.split('/').pop()!;
+    const same = files.filter((f) => normalizePath(f.path).split('/').pop() === name);
+    if (same.length === 1) return same[0];
+    if (same.length > 1) throw new ImportError(`${label}「${ref}」有好幾個同名的檔案，請寫出完整路徑。`);
+    throw new ImportError(
+      files.length
+        ? `${label}找不到檔案「${ref}」，請確認它在 .zip 裡（或和匯入檔一起選取）。`
+        : `${label}「${ref}」需要和匯入檔放在同一個 .zip 裡（或一起選取）。`,
+    );
+  };
+  return (raw: unknown, label: string): ImportFile => {
+    if (typeof raw === 'string' && raw.trim()) {
+      const source = find(raw.trim(), label);
+      const name = source.path.split('/').pop()!;
+      return { name, type: source.type || guessType(name) || 'application/octet-stream', size: source.size, source };
+    }
+    const f = (raw ?? {}) as Record<string, unknown>;
+    const str = (k: string) => (typeof f[k] === 'string' ? (f[k] as string).trim() : '');
+    const ref = str('file') || str('path');
+    if (ref) {
+      const source = find(ref, label);
+      const name = str('name') || source.path.split('/').pop()!;
+      return { name, type: str('type') || guessType(name) || source.type || guessType(source.path) || 'application/octet-stream', size: source.size, source };
+    }
+    const name = str('name');
+    const data = str('data').replace(/^data:[^,]*,/, '').replace(/\s+/g, '');
+    if (!name || !data || !/^[A-Za-z0-9+/]+=*$/.test(data)) throw new ImportError(`${label}格式不正確（需要檔案路徑，或 name 與 base64 的 data）。`);
+    const size = Math.floor((data.length * 3) / 4) - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0);
+    let source = inline.get(data);
+    if (!source) {
+      source = { path: name, size, read: async () => base64ToBytes(data) };
+      inline.set(data, source);
+    }
+    return { name, type: str('type') || guessType(name) || 'application/octet-stream', size, source };
+  };
 }
 
-function guessType(name: string): string {
-  const ext = name.toLowerCase().split('.').pop() ?? '';
-  const map: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', pdf: 'application/pdf', mp4: 'video/mp4', mov: 'video/quicktime' };
-  return map[ext] ?? 'application/octet-stream';
+const TYPES: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  avif: 'image/avif',
+  pdf: 'application/pdf',
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  mov: 'video/quicktime',
+  webm: 'video/webm',
+  mp3: 'audio/mpeg',
+  m4a: 'audio/mp4',
+  wav: 'audio/wav',
+  txt: 'text/plain',
+  zip: 'application/zip',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+};
+
+/** 依副檔名判斷檔案類型；不認得時回傳空字串 */
+export function guessType(name: string): string {
+  return TYPES[name.toLowerCase().split('.').pop() ?? ''] ?? '';
 }
 
 function toRef(raw: unknown): ChannelRef | null {
@@ -190,6 +263,69 @@ export function findDuplicate(content: string, at: string, channelIds: string[],
       (p.payload.content ?? '').trim() === content.trim() &&
       p.channels.some((c) => channelIds.includes(c)),
   );
+}
+
+// ───────────────────────── 讀取檔案 ─────────────────────────
+
+export const MAX_MANIFEST_BYTES = 40_000_000;
+
+export interface ImportSource {
+  text: string;
+  files: ImportBlob[];
+  base: string;
+}
+
+const isJson = (name: string) => /\.json$/i.test(name);
+const blobOf = (f: File): ImportBlob => ({ path: f.webkitRelativePath || f.name, size: f.size, type: f.type || undefined, read: async () => new Uint8Array(await f.arrayBuffer()) });
+
+/** 使用者選取（或拖曳）的檔案：一個 .zip、一個 .json，或 .json 加上要附的檔案 */
+export async function loadImportFiles(list: File[]): Promise<ImportSource> {
+  const picked = list.filter((f) => !isJunkPath(f.name));
+  if (!picked.length) throw new ImportError('沒有選到檔案。');
+  const zips: File[] = [];
+  // .pptx、.docx 其實也是 zip，所以只有副檔名不明的單一檔案才看檔頭
+  for (const f of picked) if (/\.zip$/i.test(f.name) || (picked.length === 1 && !guessType(f.name) && !isJson(f.name) && (await looksLikeZip(f)))) zips.push(f);
+  if (zips.length) {
+    if (picked.length > 1) throw new ImportError('選 .zip 時請只選那一個檔案。');
+    return loadZip(zips[0]);
+  }
+  const manifests = picked.filter((f) => isJson(f.name));
+  if (manifests.length !== 1) {
+    throw new ImportError(manifests.length ? '一次只能選一個匯入檔（.json）。' : '請一起選取匯入檔（.json），或改選整包 .zip。');
+  }
+  const manifest = manifests[0];
+  if (manifest.size > MAX_MANIFEST_BYTES) throw new ImportError('匯入檔太大了（超過 40 MB）。有照片或影片時請改用 .zip。');
+  return { text: await manifest.text(), files: picked.filter((f) => f !== manifest).map(blobOf), base: '' };
+}
+
+async function loadZip(file: File): Promise<ImportSource> {
+  let entries;
+  try {
+    entries = await readZip(file);
+  } catch (err) {
+    throw new ImportError(err instanceof ZipError ? err.message : `讀取 .zip 失敗：${(err as Error).message}`);
+  }
+  const depth = (p: string) => p.split('/').length;
+  const jsons = entries.filter((e) => isJson(e.path)).sort((a, b) => depth(a.path) - depth(b.path));
+  let manifest = jsons.find((e) => /(^|\/)posts\.json$/i.test(e.path));
+  let text = '';
+  if (!manifest) {
+    // 沒有 posts.json 時，找內容是匯入檔的那一個
+    for (const e of jsons) {
+      if (e.size > MAX_MANIFEST_BYTES) continue;
+      const t = new TextDecoder().decode(await e.read());
+      if (/"tnda"\s*:\s*"import"/.test(t)) {
+        if (manifest) throw new ImportError('壓縮檔裡有好幾個匯入檔，請只留一個 posts.json。');
+        manifest = e;
+        text = t;
+      }
+    }
+  }
+  if (!manifest) throw new ImportError('壓縮檔裡找不到匯入檔（posts.json）。');
+  if (manifest.size > MAX_MANIFEST_BYTES) throw new ImportError('posts.json 太大了（超過 40 MB）。');
+  if (!text) text = new TextDecoder().decode(await manifest.read());
+  const base = manifest.path.includes('/') ? manifest.path.slice(0, manifest.path.lastIndexOf('/')) : '';
+  return { text, files: entries.filter((e) => e !== manifest), base };
 }
 
 // ───────────────────────── 匯入連結 ─────────────────────────

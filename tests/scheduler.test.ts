@@ -245,7 +245,7 @@ describe('排程器讀取 git 取出的資料', () => {
     const dir = await mkdtemp(join(tmpdir(), 'tnda-data-'));
     for (const path of s.gh.branches.get(DEFAULT_DATA_BRANCH)!.files.keys()) {
       await mkdir(dirname(join(dir, path)), { recursive: true });
-      await writeFile(join(dir, path), s.gh.readText(DEFAULT_DATA_BRANCH, path)!);
+      await writeFile(join(dir, path), s.gh.readBytes(DEFAULT_DATA_BRANCH, path)!);
     }
     await mkdir(join(dir, '.git'));
     await writeFile(join(dir, '.git', 'HEAD'), 'ref: refs/heads/tnda-data\n');
@@ -276,6 +276,28 @@ describe('排程器讀取 git 取出的資料', () => {
     const r = await s.run({ cache });
     expect(r.sent).toBe(1);
     expect(blobGets(s)).toBe(before + 1);
+  });
+
+  it('附檔（二進位）也從取出的資料讀，不呼叫 API', async () => {
+    const s = await setup([]);
+    const video = new Uint8Array(300_000).map((_, i) => (i * 7) % 251);
+    const ref = await s.repo.putAttachment({ name: '示範.mp4', type: 'video/mp4', bytes: video });
+    await s.repo.createPost(post('p1', new Date(T0.getTime() - 1000), { attachments: [ref] }));
+    const { cache } = await blobCacheFromDir(await checkout(s));
+    const sent: { name: string; bytes: Uint8Array }[][] = [];
+    const before = blobGets(s);
+    const r = await s.run({
+      cache,
+      send: async (_u, _p, files) => {
+        sent.push(files ?? []);
+        return { ok: true, messageId: '1' };
+      },
+    });
+    expect(r.sent).toBe(1);
+    expect(sent).toHaveLength(2);
+    expect(sent[0][0].name).toBe('示範.mp4');
+    expect(Buffer.from(sent[0][0].bytes).equals(Buffer.from(video))).toBe(true);
+    expect(blobGets(s)).toBe(before);
   });
 
   it('資料夾不存在時回傳空快取', async () => {

@@ -9,7 +9,7 @@ interface Branch {
 
 export interface FakeGitHub {
   fetch: typeof fetch;
-  blobs: Map<string, string>;
+  blobs: Map<string, Buffer>;
   branches: Map<string, Branch>;
   secrets: Map<string, string>;
   dispatches: Array<{ workflow: string; ref: string }>;
@@ -17,10 +17,11 @@ export interface FakeGitHub {
   /** 下一次 PUT 這個路徑時，模擬「別人剛好先改了」 */
   injectConflict(path: string, mutate?: (text: string) => string): void;
   readText(branch: string, path: string): string | undefined;
+  readBytes(branch: string, path: string): Buffer | undefined;
 }
 
-function sha(text: string): string {
-  return createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0${text}`).digest('hex');
+function sha(data: Buffer): string {
+  return createHash('sha1').update(`blob ${data.length}\0`).update(data).digest('hex');
 }
 
 function json(status: number, body: unknown): Response {
@@ -31,7 +32,7 @@ function json(status: number, body: unknown): Response {
 }
 
 export function createFakeGitHub(owner = 'demo', repo = 'TNDA'): FakeGitHub {
-  const blobs = new Map<string, string>();
+  const blobs = new Map<string, Buffer>();
   const branches = new Map<string, Branch>();
   const secrets = new Map<string, string>();
   const dispatches: Array<{ workflow: string; ref: string }> = [];
@@ -41,11 +42,13 @@ export function createFakeGitHub(owner = 'demo', repo = 'TNDA'): FakeGitHub {
   const pendingCommits = new Map<string, Map<string, string>>();
   branches.set('main', { files: new Map([['README.md', putBlob('# TNDA')]]), commits: 1 });
 
-  function putBlob(text: string): string {
-    const s = sha(text);
-    blobs.set(s, text);
+  function putBlob(data: string | Buffer): string {
+    const buf = typeof data === 'string' ? Buffer.from(data, 'utf8') : data;
+    const s = sha(buf);
+    blobs.set(s, buf);
     return s;
   }
+  const textOf = (s: string) => blobs.get(s)!.toString('utf8');
 
   const prefix = `/repos/${owner}/${repo}`;
 
@@ -74,9 +77,9 @@ export function createFakeGitHub(owner = 'demo', repo = 'TNDA'): FakeGitHub {
     }
     m = /^\/git\/blobs\/(\w+)$/.exec(rest);
     if (m && method === 'GET') {
-      const text = blobs.get(m[1]);
-      if (text === undefined) return json(404, { message: 'Not Found' });
-      return json(200, { content: Buffer.from(text).toString('base64'), encoding: 'base64' });
+      const data = blobs.get(m[1]);
+      if (data === undefined) return json(404, { message: 'Not Found' });
+      return json(200, { content: data.toString('base64'), encoding: 'base64' });
     }
     m = /^\/contents\/(.+)$/.exec(rest);
     if (m) {
@@ -87,13 +90,13 @@ export function createFakeGitHub(owner = 'demo', repo = 'TNDA'): FakeGitHub {
       const current = b.files.get(filePath);
       if (method === 'GET') {
         if (!current) return json(404, { message: 'Not Found' });
-        return json(200, { sha: current, content: Buffer.from(blobs.get(current)!).toString('base64'), encoding: 'base64' });
+        return json(200, { sha: current, content: blobs.get(current)!.toString('base64'), encoding: 'base64' });
       }
       if (conflicts.has(filePath)) {
         const mutate = conflicts.get(filePath);
         conflicts.delete(filePath);
-        if (current && mutate) b.files.set(filePath, putBlob(mutate(blobs.get(current)!)));
-        else if (current) b.files.set(filePath, putBlob(blobs.get(current)! + ' '));
+        if (current && mutate) b.files.set(filePath, putBlob(mutate(textOf(current))));
+        else if (current) b.files.set(filePath, putBlob(textOf(current) + ' '));
         b.commits++;
         return json(409, { message: `${filePath} does not match` });
       }
@@ -102,8 +105,7 @@ export function createFakeGitHub(owner = 'demo', repo = 'TNDA'): FakeGitHub {
           return json(body.sha ? 409 : 422, { message: body.sha ? `${filePath} does not match ${body.sha}` : 'Invalid request.\n\n"sha" wasn\'t supplied.' });
         }
         if (!current && body.sha) return json(409, { message: 'sha does not match' });
-        const text = Buffer.from(body.content, 'base64').toString('utf8');
-        const s = putBlob(text);
+        const s = putBlob(Buffer.from(body.content, 'base64'));
         b.files.set(filePath, s);
         b.commits++;
         return json(current ? 200 : 201, { content: { sha: s, path: filePath }, commit: { sha: `c${b.commits}` } });
@@ -172,6 +174,10 @@ export function createFakeGitHub(owner = 'demo', repo = 'TNDA'): FakeGitHub {
       conflicts.set(path, mutate);
     },
     readText(branch, path) {
+      const s = branches.get(branch)?.files.get(path);
+      return s ? textOf(s) : undefined;
+    },
+    readBytes(branch, path) {
       const s = branches.get(branch)?.files.get(path);
       return s ? blobs.get(s) : undefined;
     },

@@ -112,7 +112,16 @@ export function Compose() {
     }
     const parsed = parseAnnouncement(raw, new Date(), typeLocked && !force ? draft.type : undefined);
     const next = draftFromParse(parsed, raw, settings);
-    setDraft((d) => ({ ...next, style: d.style, showCountdown: d.showCountdown, imageUrl: d.imageUrl, mention: parsed.mention !== 'none' ? parsed.mention : d.mention }));
+    // 附檔與投票不是從文字整理出來的，重新整理時保留
+    setDraft((d) => ({
+      ...next,
+      style: d.style,
+      showCountdown: d.showCountdown,
+      imageUrl: d.imageUrl,
+      mention: parsed.mention !== 'none' ? parsed.mention : d.mention,
+      poll: d.poll,
+      attachments: d.attachments,
+    }));
     setDetections(parsed.detections);
     if (force) setFieldsDirty(false);
     const course = detectCourse(raw, channels);

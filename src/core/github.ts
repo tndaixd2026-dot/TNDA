@@ -1,6 +1,6 @@
 // 精簡的 GitHub REST API 用戶端，瀏覽器與排程器共用。
 
-import { base64ToUtf8, utf8ToBase64 } from './crypto.ts';
+import { base64ToBytes, base64ToUtf8, bytesToBase64, utf8ToBase64 } from './crypto.ts';
 
 export class GitHubError extends Error {
   status: number;
@@ -132,6 +132,24 @@ export class GitHubClient {
     return base64ToUtf8(data.content);
   }
 
+  async getBlobBytes(sha: string): Promise<Uint8Array> {
+    const data = await this.request<{ content: string; encoding: string }>('GET', `${this.repoPath}/git/blobs/${sha}`);
+    return data.encoding === 'base64' ? base64ToBytes(data.content) : new TextEncoder().encode(data.content);
+  }
+
+  async getFileBytes(path: string, branch: string): Promise<{ sha: string; bytes: Uint8Array } | null> {
+    try {
+      const data = await this.request<{ sha: string; content?: string }>(
+        'GET',
+        `${this.repoPath}/contents/${encodePath(path)}?ref=${encodeURIComponent(branch)}`,
+      );
+      return { sha: data.sha, bytes: data.content ? base64ToBytes(data.content) : await this.getBlobBytes(data.sha) };
+    } catch (err) {
+      if (err instanceof GitHubError && err.status === 404) return null;
+      throw err;
+    }
+  }
+
   async getFile(path: string, branch: string): Promise<{ sha: string; text: string } | null> {
     try {
       const data = await this.request<{ sha: string; content?: string; encoding?: string }>(
@@ -147,9 +165,17 @@ export class GitHubClient {
     }
   }
 
-  async putFile(
+  putFile(path: string, text: string, opts: { branch: string; message: string; sha?: string }): Promise<{ sha: string; commit: string }> {
+    return this.putContent(path, utf8ToBase64(text), opts);
+  }
+
+  putFileBytes(path: string, bytes: Uint8Array, opts: { branch: string; message: string; sha?: string }): Promise<{ sha: string; commit: string }> {
+    return this.putContent(path, bytesToBase64(bytes), opts);
+  }
+
+  private async putContent(
     path: string,
-    text: string,
+    base64: string,
     opts: { branch: string; message: string; sha?: string },
   ): Promise<{ sha: string; commit: string }> {
     const data = await this.request<{ content: { sha: string }; commit: { sha: string } }>(
@@ -157,7 +183,7 @@ export class GitHubClient {
       `${this.repoPath}/contents/${encodePath(path)}`,
       {
         message: opts.message,
-        content: utf8ToBase64(text),
+        content: base64,
         branch: opts.branch,
         ...(opts.sha ? { sha: opts.sha } : {}),
       },

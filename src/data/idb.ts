@@ -47,6 +47,15 @@ export class IdbBlobCache implements BlobCache {
     }
   }
 
+  // 附檔（可能是影片）只放在記憶體，不寫進 IndexedDB 以免占用空間
+  getBytes(sha: string): Promise<Uint8Array | undefined> {
+    return this.mem.getBytes(sha);
+  }
+
+  setBytes(sha: string, bytes: Uint8Array): Promise<void> {
+    return this.mem.setBytes(sha, bytes);
+  }
+
   static async clear(): Promise<void> {
     if (typeof indexedDB === 'undefined') return;
     await new Promise<void>((resolve) => {

@@ -28,8 +28,8 @@ export async function blobCacheFromDir(dir: string): Promise<{ cache: MemoryBlob
       const full = join(path, e.name);
       if (e.isDirectory()) await walk(full);
       else if (e.isFile()) {
-        const bytes = await readFile(full);
-        await cache.set(gitBlobSha(bytes), bytes.toString('utf8'));
+        const bytes = new Uint8Array(await readFile(full));
+        await cache.setBytes(gitBlobSha(bytes), bytes);
         files++;
       }
     }

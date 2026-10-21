@@ -104,6 +104,8 @@ export interface AttachmentRef {
   name: string;
   type: string;
   size: number;
+  /** bin：files/{id}.bin（二進位加密）；沒有這個欄位是舊格式 files/{id}.json */
+  enc?: 'bin';
 }
 
 export interface PollDraft {

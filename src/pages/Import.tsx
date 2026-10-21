@@ -5,10 +5,12 @@ import { fmtDate, fmtTime } from '../core/time.ts';
 import { composePayload, emptyDraft } from '../format/composer.ts';
 import {
   ImportError,
+  type ImportBlob,
   type ImportBundle,
   type ImportItem,
   decodeImportData,
   findDuplicate,
+  loadImportFiles,
   matchChannels,
   parseImportBundle,
   refKey,
@@ -16,8 +18,8 @@ import {
   resolveTargets,
 } from '../data/importer.ts';
 import { buildPost, clearPendingImport, importPosts, navigate, pendingImport, toast, uploadAttachment, useApp, useNow } from '../data/store.ts';
-import { base64ToBytes } from '../core/crypto.ts';
 import { DiscordPreview } from '../ui/DiscordPreview.tsx';
+import { fmtSize } from '../ui/Attachments.tsx';
 import { Icon } from '../ui/icons.tsx';
 import { Btn, ChannelChips, TypeTag, askConfirm } from '../ui/kit.tsx';
 
@@ -51,13 +53,14 @@ export function ImportPage() {
   const [loading, setLoading] = useState(false);
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [overrides, setOverrides] = useState<Record<number, boolean>>({});
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [progress, setProgress] = useState<{ label: string; done: number; total: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
 
-  async function load(input: string) {
+  async function load(read: () => Promise<ImportBundle>) {
     setLoading(true);
     setError('');
     try {
-      const b = await readSource(input);
+      const b = await read();
       const map: Record<string, string> = {};
       for (const item of b.posts) {
         for (const ref of item.to) {
@@ -80,7 +83,7 @@ export function ImportPage() {
   // 從匯入連結進來的，自動讀取
   useEffect(() => {
     const data = pendingImport();
-    if (data && channels.length) void load(data);
+    if (data && channels.length) void load(() => readSource(data));
   }, [channels.length]);
 
   const rows = useMemo<Row[]>(() => {
@@ -114,14 +117,16 @@ export function ImportPage() {
     return [...seen.values()];
   }, [bundle, channels]);
   const unmapped = refs.filter((r) => !mapping[r.key]).length;
+  const chosenFiles = new Set(chosen.flatMap((r) => r.item.attachments ?? []).map((f) => f.source));
+  const media = { count: chosenFiles.size, bytes: [...chosenFiles].reduce((n, f) => n + f.size, 0) };
 
-  async function onFile(file: File | undefined) {
-    if (!file) return;
-    if (file.size > 40_000_000) {
-      setError('檔案太大了（超過 40 MB）。');
-      return;
-    }
-    await load(await file.text());
+  async function onFiles(list: FileList | null | undefined) {
+    const files = [...(list ?? [])];
+    if (!files.length) return;
+    await load(async () => {
+      const src = await loadImportFiles(files);
+      return parseImportBundle(src.text, src.files, src.base);
+    });
   }
 
   async function submit() {
@@ -133,21 +138,24 @@ export function ImportPage() {
     });
     if (!ok) return;
     const sorted = [...chosen].sort((a, b) => Date.parse(a.item.at) - Date.parse(b.item.at));
-    setProgress({ done: 0, total: sorted.length });
     // 先上傳附檔（同一個檔案只傳一次），再建立貼文
-    const uploaded = new Map<string, AttachmentRef>();
+    const uploaded = new Map<ImportBlob, AttachmentRef>();
+    const total = new Set(sorted.flatMap((r) => (r.item.attachments ?? []).map((f) => f.source))).size;
+    let done = 0;
+    if (total) setProgress({ label: '上傳附檔', done, total });
     const list: Post[] = [];
     try {
       for (const r of sorted) {
         const refs: AttachmentRef[] = [];
         for (const f of r.item.attachments ?? []) {
-          const key = `${f.name}:${f.size}:${f.data.slice(0, 64)}:${f.data.slice(-64)}`;
-          let ref = uploaded.get(key);
+          let ref = uploaded.get(f.source);
           if (!ref) {
-            ref = await uploadAttachment({ name: f.name, type: f.type, bytes: base64ToBytes(f.data) });
-            uploaded.set(key, ref);
+            ref = await uploadAttachment({ name: f.name, type: f.type, bytes: await f.source.read() });
+            uploaded.set(f.source, ref);
+            setProgress({ label: '上傳附檔', done: ++done, total });
           }
-          refs.push(ref);
+          // 同一個檔案在不同貼文裡用了不同檔名：沿用已上傳的內容，只換發出去的檔名
+          refs.push(ref.name === f.name && ref.type === f.type ? ref : { ...ref, name: f.name, type: f.type });
         }
         const post = r.post!;
         list.push(refs.length ? { ...post, attachments: refs, draft: post.draft ? { ...post.draft, attachments: refs } : post.draft } : post);
@@ -157,7 +165,8 @@ export function ImportPage() {
       toast('error', `附檔上傳失敗：${(err as Error).message}`);
       return;
     }
-    const res = await importPosts(list, (done) => setProgress({ done, total: list.length }));
+    setProgress({ label: '建立中', done: 0, total: list.length });
+    const res = await importPosts(list, (n) => setProgress({ label: '建立中', done: n, total: list.length }));
     setProgress(null);
     if (res.error) {
       toast('error', `已建立 ${res.created} 則，其餘失敗：${res.error}。重新整理後再匯入一次，已建立的會自動標成重複並略過。`);
@@ -199,20 +208,34 @@ export function ImportPage() {
       {!bundle ? (
         <section class="card card-pad stack" style={{ maxWidth: 760 }}>
           <h3>讀取匯入檔</h3>
-          <p class="small muted">匯入檔可以請 Claude 依你的課表與公告內容產生。選擇檔案、拖曳到下面，或直接貼上匯入連結／內容。</p>
+          <p class="small muted">匯入檔可以請 Claude 依你的課表與公告內容產生。有照片或影片時是一個 .zip，直接選它就好；也可以把 .json 和要附的檔案一起選取。</p>
           <label
-            class="imp-drop"
-            onDragOver={(e) => e.preventDefault()}
+            class={`imp-drop ${dragging ? 'is-over' : ''}`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragging(true);
+            }}
+            onDragLeave={() => setDragging(false)}
             onDrop={(e) => {
               e.preventDefault();
-              void onFile(e.dataTransfer?.files?.[0]);
+              setDragging(false);
+              void onFiles(e.dataTransfer?.files);
             }}
           >
-            <Icon name="inbox" />
+            <Icon name={loading ? 'loader' : 'inbox'} class={loading ? 'spin' : undefined} />
             <span>
-              <b>選擇匯入檔</b>或拖曳到這裡（.json）
+              <b>選擇匯入檔</b>或拖曳到這裡（.zip，或 .json＋照片／影片）
             </span>
-            <input type="file" accept=".json,application/json,text/plain" class="sr-only" onChange={(e) => void onFile((e.currentTarget as HTMLInputElement).files?.[0])} />
+            <input
+              type="file"
+              multiple
+              accept=".zip,.json,application/zip,application/json,image/*,video/*,application/pdf"
+              class="sr-only"
+              onChange={(e) => {
+                const input = e.currentTarget as HTMLInputElement;
+                void onFiles(input.files).finally(() => (input.value = ''));
+              }}
+            />
           </label>
           <div class="field">
             <label for="imp-text">或貼上匯入連結／內容</label>
@@ -225,7 +248,7 @@ export function ImportPage() {
             </div>
           ) : null}
           <div class="row">
-            <Btn variant="primary" icon="download" busy={loading} disabled={!source.trim()} onClick={() => void load(source)}>
+            <Btn variant="primary" icon="download" busy={loading} disabled={!source.trim()} onClick={() => void load(() => readSource(source))}>
               讀取
             </Btn>
           </div>
@@ -310,11 +333,12 @@ export function ImportPage() {
               ) : (
                 <>
                   已選 <b>{chosen.length}</b> / {rows.length} 則
+                  {media.count ? `・附檔 ${media.count} 個（${fmtSize(media.bytes)}），排程時會先加密上傳` : ''}
                 </>
               )}
             </span>
             <Btn variant="primary" icon="clock" busy={!!progress} disabled={!chosen.length} onClick={() => void submit()}>
-              {progress ? `建立中 ${progress.done}/${progress.total}…` : `排程 ${chosen.length} 則`}
+              {progress ? `${progress.label} ${progress.done}/${progress.total}…` : `排程 ${chosen.length} 則`}
             </Btn>
           </div>
         </div>
@@ -368,7 +392,7 @@ function ImportRow({ row, checked, onToggle, channels, theme }: { row: Row; chec
             channel={channels.find((c) => c.id === row.targets?.[0])}
             at={Date.parse(item.at)}
             theme={theme}
-            files={item.attachments?.map((f) => ({ name: f.name, type: f.type, size: f.size, url: `data:${f.type};base64,${f.data}` }))}
+            files={item.attachments?.map((f) => ({ name: f.name, type: f.type, size: f.size, read: f.source.read }))}
           />
         ) : open ? (
           <pre class="imp-raw">{item.content}</pre>

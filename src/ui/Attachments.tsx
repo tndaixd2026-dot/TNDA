@@ -11,8 +11,10 @@ export interface PreviewFile {
   name: string;
   type: string;
   size: number;
-  /** 本機已有的網址（例如匯入檔裡的圖片） */
+  /** 本機已有的網址 */
   url?: string;
+  /** 本機的檔案內容（例如匯入的 .zip 裡的照片），需要時才讀 */
+  read?: () => Promise<Uint8Array>;
   ref?: AttachmentRef;
 }
 
@@ -23,29 +25,41 @@ export function fmtSize(bytes: number): string {
 }
 
 const isImage = (type: string) => /^image\//.test(type);
+const isVideo = (type: string) => /^video\//.test(type);
 
-/** 需要時才解密的圖片 */
-function useFileUrl(file: PreviewFile): string | undefined {
+const localUrls = new WeakMap<() => Promise<Uint8Array>, Promise<string>>();
+
+function localUrl(file: PreviewFile & { read: () => Promise<Uint8Array> }): Promise<string> {
+  let url = localUrls.get(file.read);
+  if (!url) {
+    url = file.read().then((bytes) => URL.createObjectURL(new Blob([bytes as BlobPart], { type: file.type })));
+    localUrls.set(file.read, url);
+  }
+  return url;
+}
+
+/** 需要時才讀取／解密；影片要等使用者按下播放才載入 */
+function useFileUrl(file: PreviewFile, enabled: boolean): string | undefined {
   const [url, setUrl] = useState(file.url);
   useEffect(() => {
-    if (file.url || !file.ref || !isImage(file.type)) return;
+    if (file.url || !enabled) return;
+    const load = file.read ? localUrl({ ...file, read: file.read }) : file.ref ? attachmentUrl(file.ref) : null;
+    if (!load) return;
     let alive = true;
-    attachmentUrl(file.ref)
-      .then((u) => alive && setUrl(u))
-      .catch(() => {});
+    load.then((u) => alive && setUrl(u)).catch(() => {});
     return () => {
       alive = false;
     };
-  }, [file.ref?.id, file.url]);
+  }, [file.ref?.id, file.read, file.url, enabled]);
   return url ?? file.url;
 }
 
 function Thumb({ file }: { file: PreviewFile }) {
-  const url = useFileUrl(file);
+  const url = useFileUrl(file, isImage(file.type));
   if (isImage(file.type) && url) return <img class="att-thumb" src={url} alt={file.name} />;
   return (
     <span class="att-thumb att-icon" aria-hidden="true">
-      <Icon name="file" />
+      <Icon name={isVideo(file.type) ? 'play' : 'file'} />
     </span>
   );
 }
@@ -122,17 +136,15 @@ export function AttachmentsEditor({ refs, onChange, locked }: { refs: Attachment
   );
 }
 
-/** Discord 預覽裡的附檔 */
+/** Discord 預覽裡的附檔：圖片與影片排成相簿，其他檔案顯示成下載卡片 */
 export function PreviewAttachments({ files }: { files: PreviewFile[] }) {
-  const images = files.filter((f) => isImage(f.type));
-  const others = files.filter((f) => !isImage(f.type));
+  const media = files.filter((f) => isImage(f.type) || isVideo(f.type));
+  const others = files.filter((f) => !media.includes(f));
   return (
     <div class="dc-files">
-      {images.length ? (
-        <div class={`dc-gallery n${Math.min(images.length, 4)}`}>
-          {images.map((f, i) => (
-            <PreviewImage key={i} file={f} />
-          ))}
+      {media.length ? (
+        <div class={`dc-gallery n${Math.min(media.length, 4)}`}>
+          {media.map((f, i) => (isVideo(f.type) ? <PreviewVideo key={i} file={f} /> : <PreviewImage key={i} file={f} />))}
         </div>
       ) : null}
       {others.map((f, i) => (
@@ -149,6 +161,22 @@ export function PreviewAttachments({ files }: { files: PreviewFile[] }) {
 }
 
 function PreviewImage({ file }: { file: PreviewFile }) {
-  const url = useFileUrl(file);
+  const url = useFileUrl(file, true);
   return url ? <img src={url} alt={file.name} loading="lazy" /> : <div class="dc-img-loading">{file.name}</div>;
+}
+
+function PreviewVideo({ file }: { file: PreviewFile }) {
+  const [play, setPlay] = useState(false);
+  const url = useFileUrl(file, play);
+  if (play && url) return <video src={url} controls autoPlay playsInline aria-label={file.name} />;
+  return (
+    <button type="button" class="dc-video" onClick={() => setPlay(true)} aria-label={`播放 ${file.name}`}>
+      <span class="dc-video-play">
+        <Icon name={play ? 'loader' : 'play'} class={play ? 'spin' : undefined} />
+      </span>
+      <span class="dc-video-name">
+        {file.name}・{fmtSize(file.size)}
+      </span>
+    </button>
+  );
 }

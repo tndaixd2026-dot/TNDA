@@ -18,6 +18,7 @@
 │ 狀態 store.ts         │ ◀─────── │   channels.json（加密）   │ ◀────── │   scheduler.ts      │
 │ 準時代發 ─────────────┼──┐       │   settings.json（加密）   │         └─────────┬──────────┘
 └──────────────────────┘  │       │   posts/p_*.json（加密）  │                   │ Webhook
+                          │       │   files/f_*.bin （加密）  │                   │
                           │       └──────────────────────────┘                   ▼
                           └─────────────────────────────────────────────▶  Discord 頻道
 ```
@@ -27,6 +28,7 @@
 - **同步金鑰**：160 位元亂數，以 Crockford Base32 顯示為 `TNDA-XXXX-…`（去掉易混淆字元，輸入時也容忍大小寫與 O/0、I/1）。
 - **金鑰衍生**：HKDF-SHA256（salt `tnda-relay/v1`）→ AES-256-GCM 金鑰。
 - **檔案格式**：`{"tnda":1,"alg":"A256GCM","iv":"…","ct":"…"}`；以檔案路徑作為 AAD，加密檔被搬到別的路徑就解不開。
+- **附檔**：`files/f_*.bin` 直接存二進位，`TNDAF1`（6 bytes）＋ IV（12 bytes）＋ 密文與驗證碼，同樣以路徑作為 AAD；比 base64 包在 JSON 裡小約 25%。檔名與類型只記在（加密的）貼文裡。舊版 `files/f_*.json` 仍可讀取。
 - `meta.json` 存一段加密的檢查字串，用來確認輸入的金鑰正確。
 - 排程器的金鑰存在 Actions Secret `TNDA_SYNC_KEY`。網站用 repo 的公開金鑰以 libsodium sealed box（tweetnacl + BLAKE2b 實作，已用 libsodium 交叉測試）加密後，透過 GitHub API 寫入。
 

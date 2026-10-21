@@ -3,7 +3,7 @@
 
 import type { AttachmentRef, Channel, Envelope, Post, RepoMeta, Settings } from './types.ts';
 import { DEFAULT_SETTINGS } from './types.ts';
-import { base64ToBytes, bytesToBase64, decryptJSON, encryptJSON, importSyncKey, isEnvelope, randomId } from './crypto.ts';
+import { base64ToBytes, decryptBytes, decryptJSON, encryptBytes, encryptJSON, importSyncKey, isEnvelope, randomId } from './crypto.ts';
 import { GitHubClient, GitHubError, isConflict } from './github.ts';
 
 export const DEFAULT_DATA_BRANCH = 'tnda-data';
@@ -16,6 +16,7 @@ export const PATHS = {
   settings: 'settings.json',
   post: (id: string) => `posts/${id}.json`,
   file: (id: string) => `files/${id}.json`,
+  binFile: (id: string) => `files/${id}.bin`,
 };
 
 const KEY_CHECK = 'tnda-relay-key-ok';
@@ -45,15 +46,28 @@ export interface Snapshot {
 export interface BlobCache {
   get(sha: string): Promise<string | undefined>;
   set(sha: string, text: string): Promise<void>;
+  /** 二進位檔（附檔）；沒有實作時一律從 GitHub 下載 */
+  getBytes?(sha: string): Promise<Uint8Array | undefined>;
+  setBytes?(sha: string, bytes: Uint8Array): Promise<void>;
 }
 
 export class MemoryBlobCache implements BlobCache {
   private map = new Map<string, string>();
+  private bin = new Map<string, Uint8Array>();
   async get(sha: string) {
-    return this.map.get(sha);
+    const text = this.map.get(sha);
+    if (text !== undefined) return text;
+    const bytes = this.bin.get(sha);
+    return bytes ? new TextDecoder().decode(bytes) : undefined;
   }
   async set(sha: string, text: string) {
     this.map.set(sha, text);
+  }
+  async getBytes(sha: string) {
+    return this.bin.get(sha);
+  }
+  async setBytes(sha: string, bytes: Uint8Array) {
+    this.bin.set(sha, bytes);
   }
 }
 
@@ -232,16 +246,38 @@ export class GitHubDataRepo {
     return res.sha;
   }
 
-  /** 加密並儲存一個附檔，回傳給貼文引用的資訊 */
+  /** 加密並儲存一個附檔（二進位，不轉成文字），回傳給貼文引用的資訊 */
   async putAttachment(file: { name: string; type: string; bytes: Uint8Array }): Promise<AttachmentRef> {
     const id = randomId('f', 16);
-    const path = PATHS.file(id);
-    await this.write(path, { name: file.name, type: file.type, data: bytesToBase64(file.bytes) }, `relay: 新增附檔 ${id}`, null);
-    this.fileShas.set(path, this.shas.get(path)!);
-    return { id, name: file.name, type: file.type, size: file.bytes.length };
+    const path = PATHS.binFile(id);
+    const blob = await encryptBytes(this.key, file.bytes, path);
+    const res = await this.client.putFileBytes(path, blob, { branch: this.branch, message: `relay: 新增附檔 ${id}` });
+    this.fileShas.set(path, res.sha);
+    await this.cache.setBytes?.(res.sha, blob);
+    return { id, name: file.name, type: file.type, size: file.bytes.length, enc: 'bin' };
+  }
+
+  private async readBytes(sha: string): Promise<Uint8Array> {
+    const cached = await this.cache.getBytes?.(sha);
+    if (cached) return cached;
+    const bytes = await this.client.getBlobBytes(sha);
+    await this.cache.setBytes?.(sha, bytes);
+    return bytes;
   }
 
   async getAttachment(ref: AttachmentRef): Promise<{ name: string; type: string; bytes: Uint8Array }> {
+    if (ref.enc === 'bin') {
+      const path = PATHS.binFile(ref.id);
+      const sha = this.fileShas.get(path);
+      let blob: Uint8Array;
+      if (sha) blob = await this.readBytes(sha);
+      else {
+        const file = await this.client.getFileBytes(path, this.branch);
+        if (!file) throw new Error(`找不到附檔 ${ref.name}`);
+        blob = file.bytes;
+      }
+      return { name: ref.name, type: ref.type, bytes: await decryptBytes(this.key, blob, path) };
+    }
     const path = PATHS.file(ref.id);
     const sha = this.fileShas.get(path) ?? this.shas.get(path);
     let data: { name: string; type: string; data: string };
