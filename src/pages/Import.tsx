@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
-import type { Channel, Post } from '../core/types.ts';
-import { validatePayload } from '../core/discord.ts';
+import type { AttachmentRef, Channel, Post } from '../core/types.ts';
+import { attachmentProblems, validatePayload } from '../core/discord.ts';
 import { fmtDate, fmtTime } from '../core/time.ts';
 import { composePayload, emptyDraft } from '../format/composer.ts';
 import {
@@ -15,7 +15,8 @@ import {
   refLabel,
   resolveTargets,
 } from '../data/importer.ts';
-import { buildPost, clearPendingImport, importPosts, navigate, pendingImport, toast, useApp, useNow } from '../data/store.ts';
+import { buildPost, clearPendingImport, importPosts, navigate, pendingImport, toast, uploadAttachment, useApp, useNow } from '../data/store.ts';
+import { base64ToBytes } from '../core/crypto.ts';
 import { DiscordPreview } from '../ui/DiscordPreview.tsx';
 import { Icon } from '../ui/icons.tsx';
 import { Btn, ChannelChips, TypeTag, askConfirm } from '../ui/kit.tsx';
@@ -89,7 +90,7 @@ export function ImportPage() {
       const draft = { ...emptyDraft(settings), raw: item.content, type: item.type, style: 'raw' as const, title: item.title, mention: 'none' as const, showCountdown: false, poll: item.poll };
       const post = targets ? buildPost(draft, targets, item.at) : null;
       const row: Row = { index, item, targets, post };
-      const errors = validatePayload(composePayload(draft, settings));
+      const errors = [...validatePayload(composePayload(draft, settings)), ...attachmentProblems(item.attachments ?? [])];
       if (!targets) row.blocked = '還沒對應頻道';
       else if (errors.length) row.blocked = errors[0];
       else if (Date.parse(item.at) < now) row.blocked = '時間已經過了';
@@ -116,8 +117,8 @@ export function ImportPage() {
 
   async function onFile(file: File | undefined) {
     if (!file) return;
-    if (file.size > 2_000_000) {
-      setError('檔案太大了，匯入檔通常只有幾十 KB。');
+    if (file.size > 40_000_000) {
+      setError('檔案太大了（超過 40 MB）。');
       return;
     }
     await load(await file.text());
@@ -131,8 +132,31 @@ export function ImportPage() {
       confirmLabel: `排程 ${chosen.length} 則`,
     });
     if (!ok) return;
-    const list = [...chosen].sort((a, b) => Date.parse(a.item.at) - Date.parse(b.item.at)).map((r) => r.post!);
-    setProgress({ done: 0, total: list.length });
+    const sorted = [...chosen].sort((a, b) => Date.parse(a.item.at) - Date.parse(b.item.at));
+    setProgress({ done: 0, total: sorted.length });
+    // 先上傳附檔（同一個檔案只傳一次），再建立貼文
+    const uploaded = new Map<string, AttachmentRef>();
+    const list: Post[] = [];
+    try {
+      for (const r of sorted) {
+        const refs: AttachmentRef[] = [];
+        for (const f of r.item.attachments ?? []) {
+          const key = `${f.name}:${f.size}:${f.data.slice(0, 64)}:${f.data.slice(-64)}`;
+          let ref = uploaded.get(key);
+          if (!ref) {
+            ref = await uploadAttachment({ name: f.name, type: f.type, bytes: base64ToBytes(f.data) });
+            uploaded.set(key, ref);
+          }
+          refs.push(ref);
+        }
+        const post = r.post!;
+        list.push(refs.length ? { ...post, attachments: refs, draft: post.draft ? { ...post.draft, attachments: refs } : post.draft } : post);
+      }
+    } catch (err) {
+      setProgress(null);
+      toast('error', `附檔上傳失敗：${(err as Error).message}`);
+      return;
+    }
     const res = await importPosts(list, (done) => setProgress({ done, total: list.length }));
     setProgress(null);
     if (res.error) {
@@ -326,6 +350,7 @@ function ImportRow({ row, checked, onToggle, channels, theme }: { row: Row; chec
           {row.blocked ? <span class="pill pill-bad">{row.blocked}</span> : null}
           {row.duplicate ? <span class="pill pill-warn">已經排過，預設略過</span> : null}
           {item.poll ? <span class="pill">📊 投票・{item.poll.multi ? '可複選' : '單選'}</span> : null}
+          {item.attachments?.length ? <span class="pill">📎 {item.attachments.length} 個附檔</span> : null}
         </div>
         {item.note ? (
           <div class="callout callout-warn small">
@@ -338,7 +363,13 @@ function ImportRow({ row, checked, onToggle, channels, theme }: { row: Row; chec
           {open ? '收起預覽' : '預覽'}
         </button>
         {open && row.post ? (
-          <DiscordPreview payload={row.post.payload} channel={channels.find((c) => c.id === row.targets?.[0])} at={Date.parse(item.at)} theme={theme} />
+          <DiscordPreview
+            payload={row.post.payload}
+            channel={channels.find((c) => c.id === row.targets?.[0])}
+            at={Date.parse(item.at)}
+            theme={theme}
+            files={item.attachments?.map((f) => ({ name: f.name, type: f.type, size: f.size, url: `data:${f.type};base64,${f.data}` }))}
+          />
         ) : open ? (
           <pre class="imp-raw">{item.content}</pre>
         ) : null}

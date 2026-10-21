@@ -1,9 +1,9 @@
 // 資料層：把貼文、頻道、設定加密後存到 GitHub repo 的資料分支（預設 tnda-data）。
 // 每則貼文一個檔案，寫入時用 sha 比對避免覆蓋別人的更新。
 
-import type { Channel, Envelope, Post, RepoMeta, Settings } from './types.ts';
+import type { AttachmentRef, Channel, Envelope, Post, RepoMeta, Settings } from './types.ts';
 import { DEFAULT_SETTINGS } from './types.ts';
-import { decryptJSON, encryptJSON, importSyncKey, isEnvelope } from './crypto.ts';
+import { base64ToBytes, bytesToBase64, decryptJSON, encryptJSON, importSyncKey, isEnvelope, randomId } from './crypto.ts';
 import { GitHubClient, GitHubError, isConflict } from './github.ts';
 
 export const DEFAULT_DATA_BRANCH = 'tnda-data';
@@ -15,6 +15,7 @@ export const PATHS = {
   channels: 'channels.json',
   settings: 'settings.json',
   post: (id: string) => `posts/${id}.json`,
+  file: (id: string) => `files/${id}.json`,
 };
 
 const KEY_CHECK = 'tnda-relay-key-ok';
@@ -85,6 +86,8 @@ export class GitHubDataRepo {
   private cache: BlobCache;
   /** 路徑 → 目前已知的 blob sha */
   shas = new Map<string, string>();
+  /** 附檔路徑 → blob sha（附檔不隨 load 解密，用到時才讀） */
+  fileShas = new Map<string, string>();
 
   constructor(client: GitHubClient, key: CryptoKey, opts: { branch?: string; cache?: BlobCache } = {}) {
     this.client = client;
@@ -184,6 +187,7 @@ export class GitHubDataRepo {
     }
 
     this.shas = new Map(wanted.map((e) => [e.path, e.sha]));
+    this.fileShas = new Map(tree.filter((e) => e.path.startsWith('files/')).map((e) => [e.path, e.sha]));
     const skipped: string[] = [];
     let channels: Channel[] = [];
     let settings: Settings = { ...DEFAULT_SETTINGS };
@@ -226,6 +230,28 @@ export class GitHubDataRepo {
     this.shas.set(path, res.sha);
     await this.cache.set(res.sha, text);
     return res.sha;
+  }
+
+  /** 加密並儲存一個附檔，回傳給貼文引用的資訊 */
+  async putAttachment(file: { name: string; type: string; bytes: Uint8Array }): Promise<AttachmentRef> {
+    const id = randomId('f', 16);
+    const path = PATHS.file(id);
+    await this.write(path, { name: file.name, type: file.type, data: bytesToBase64(file.bytes) }, `relay: 新增附檔 ${id}`, null);
+    this.fileShas.set(path, this.shas.get(path)!);
+    return { id, name: file.name, type: file.type, size: file.bytes.length };
+  }
+
+  async getAttachment(ref: AttachmentRef): Promise<{ name: string; type: string; bytes: Uint8Array }> {
+    const path = PATHS.file(ref.id);
+    const sha = this.fileShas.get(path) ?? this.shas.get(path);
+    let data: { name: string; type: string; data: string };
+    if (sha) data = await this.decode(path, await this.readBlob(sha));
+    else {
+      const file = await this.read<{ name: string; type: string; data: string }>(path);
+      if (!file) throw new Error(`找不到附檔 ${ref.name}`);
+      data = file.data;
+    }
+    return { name: ref.name || data.name, type: data.type || ref.type, bytes: base64ToBytes(data.data) };
   }
 
   async savePost(post: Post, message = `relay: 更新 ${post.id}`): Promise<Post> {

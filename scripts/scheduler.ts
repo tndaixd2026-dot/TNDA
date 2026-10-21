@@ -4,7 +4,7 @@
 
 import { GitHubClient } from '../src/core/github.ts';
 import { type BlobCache, DEFAULT_DATA_BRANCH, GitHubDataRepo, KeyMismatchError, NotInitializedError } from '../src/core/repo.ts';
-import { executeWebhook, type SendResult } from '../src/core/discord.ts';
+import { executeWebhook, type SendFile, type SendResult } from '../src/core/discord.ts';
 import { isDue, recoverStale } from '../src/core/delivery.ts';
 import { channelMap, sendPost } from '../src/core/engine.ts';
 import type { DiscordPayload } from '../src/core/types.ts';
@@ -18,7 +18,7 @@ export interface SchedulerOptions {
   lookaheadMs?: number;
   now?: () => Date;
   sleep?: (ms: number) => Promise<void>;
-  send?: (url: string, payload: DiscordPayload) => Promise<SendResult>;
+  send?: (url: string, payload: DiscordPayload, files?: SendFile[]) => Promise<SendResult>;
   log?: (msg: string) => void;
   runId?: string;
   /** 預先讀好的加密檔（依 blob sha），可以省下 API 呼叫 */
@@ -102,7 +102,8 @@ export async function runScheduler(opts: SchedulerOptions): Promise<SchedulerRep
       {
         channels,
         settings: snapshot.settings,
-        send: opts.send ?? ((url, payload) => executeWebhook(url, payload)),
+        send: opts.send ?? ((url, payload, files) => executeWebhook(url, payload, fetch, files)),
+        loadFiles: (refs) => Promise.all(refs.map((r) => repo.getAttachment(r))),
         now,
         sleep,
         log,

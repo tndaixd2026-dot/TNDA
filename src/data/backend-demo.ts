@@ -1,7 +1,8 @@
 // Demo 後端：資料只存在這個瀏覽器，發送 Discord 是模擬的（不會真的送出）。
 
-import type { Channel, DiscordPayload, Post, Settings } from '../core/types.ts';
-import type { SendResult, WebhookInfo } from '../core/discord.ts';
+import type { AttachmentRef, Channel, DiscordPayload, Post, Settings } from '../core/types.ts';
+import type { SendFile, SendResult, WebhookInfo } from '../core/discord.ts';
+import { randomId } from '../core/crypto.ts';
 import type { WorkflowRun } from '../core/github.ts';
 import type { Backend, Snapshot } from './backend.ts';
 import { DEMO_SETTINGS, demoChannels, demoPosts } from './seed.ts';
@@ -19,9 +20,24 @@ interface DemoState {
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Demo 的附檔只放在記憶體（重新整理後預覽圖會消失） */
+const demoFiles = new Map<string, SendFile>();
+
 export class DemoBackend implements Backend {
   kind = 'demo' as const;
   private state: DemoState;
+
+  async putAttachment(file: SendFile): Promise<AttachmentRef> {
+    const id = randomId('f', 16);
+    demoFiles.set(id, file);
+    return { id, name: file.name, type: file.type, size: file.bytes.length };
+  }
+
+  async getAttachment(ref: AttachmentRef): Promise<SendFile> {
+    const f = demoFiles.get(ref.id);
+    if (!f) throw new Error('Demo 的附檔只保留到重新整理前');
+    return f;
+  }
 
   constructor() {
     this.state = this.read() ?? this.fresh();

@@ -1,8 +1,8 @@
 // GitHub 後端：資料加密後存在 repo 的資料分支；Discord 直接由瀏覽器發送。
 
-import type { Channel, DiscordPayload, Post, Settings } from '../core/types.ts';
+import type { AttachmentRef, Channel, DiscordPayload, Post, Settings } from '../core/types.ts';
 import { deleteWebhookMessage, editWebhookMessage, executeWebhook, getWebhookInfo } from '../core/discord.ts';
-import type { SendResult, WebhookInfo } from '../core/discord.ts';
+import type { SendFile, SendResult, WebhookInfo } from '../core/discord.ts';
 import { GitHubClient, type WorkflowRun } from '../core/github.ts';
 import { GitHubDataRepo, SCHEDULER_WORKFLOW } from '../core/repo.ts';
 import type { Backend, Snapshot } from './backend.ts';
@@ -77,8 +77,16 @@ export class GitHubBackend implements Backend {
     return this.repo.saveSettings(settings);
   }
 
-  send(url: string, payload: DiscordPayload): Promise<SendResult> {
-    return executeWebhook(url, payload);
+  send(url: string, payload: DiscordPayload, files?: SendFile[]): Promise<SendResult> {
+    return executeWebhook(url, payload, fetch, files);
+  }
+
+  putAttachment(file: SendFile): Promise<AttachmentRef> {
+    return this.repo.putAttachment(file);
+  }
+
+  getAttachment(ref: AttachmentRef): Promise<SendFile> {
+    return this.repo.getAttachment(ref);
   }
 
   deleteMessage(url: string, messageId: string): Promise<SendResult> {

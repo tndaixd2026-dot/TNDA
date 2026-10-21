@@ -27,6 +27,15 @@ export interface ImportItem {
   note?: string;
   /** 附加的投票 */
   poll?: PollDraft;
+  /** 附檔（base64），排程時才加密上傳 */
+  attachments?: ImportFile[];
+}
+
+export interface ImportFile {
+  name: string;
+  type: string;
+  data: string;
+  size: number;
 }
 
 export interface ImportBundle {
@@ -66,7 +75,17 @@ export function parseImportBundle(text: string): ImportBundle {
     const title = (typeof p.title === 'string' && p.title.trim()) || (content ? firstLine(content) : `📊 ${poll!.question}`);
     const type = POST_TYPES.includes(p.type as PostType) ? (p.type as PostType) : 'announce';
     const note = typeof p.note === 'string' && p.note.trim() ? p.note.trim() : undefined;
-    return { title: title.slice(0, 120), type, at: new Date(at).toISOString(), to, content, note, ...(poll ? { poll } : {}) };
+    const attachments = Array.isArray(p.attachments) ? p.attachments.map((a, j) => toFile(a, `${n}的第 ${j + 1} 個附檔`)) : [];
+    return {
+      title: title.slice(0, 120),
+      type,
+      at: new Date(at).toISOString(),
+      to,
+      content,
+      note,
+      ...(poll ? { poll } : {}),
+      ...(attachments.length ? { attachments } : {}),
+    };
   });
   return { name: typeof obj.name === 'string' ? obj.name : undefined, posts };
 }
@@ -100,6 +119,22 @@ function toPoll(raw: unknown, n: string): PollDraft {
   if (hours < 1 || hours > 768) throw new ImportError(`${n}的投票時間要在 1 小時到 32 天之間。`);
   const multi = p.multi === true || p.multiselect === true || p.allow_multiselect === true;
   return { question, answers, hours, multi };
+}
+
+function toFile(raw: unknown, label: string): ImportFile {
+  const f = (raw ?? {}) as Record<string, unknown>;
+  const name = typeof f.name === 'string' ? f.name.trim() : '';
+  const data = typeof f.data === 'string' ? f.data.replace(/^data:[^,]*,/, '').replace(/\s+/g, '') : '';
+  if (!name || !data || !/^[A-Za-z0-9+/]+=*$/.test(data)) throw new ImportError(`${label}格式不正確（需要 name 與 base64 的 data）。`);
+  const type = typeof f.type === 'string' && f.type ? f.type : guessType(name);
+  const size = Math.floor((data.length * 3) / 4) - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0);
+  return { name, type, data, size };
+}
+
+function guessType(name: string): string {
+  const ext = name.toLowerCase().split('.').pop() ?? '';
+  const map: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', pdf: 'application/pdf', mp4: 'video/mp4', mov: 'video/quicktime' };
+  return map[ext] ?? 'application/octet-stream';
 }
 
 function toRef(raw: unknown): ChannelRef | null {

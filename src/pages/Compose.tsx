@@ -4,12 +4,13 @@ import type { Channel, ComposeDraft, LinkItem, PostType } from '../core/types.ts
 import { parseAnnouncement, type Detection } from '../format/parser.ts';
 import { POST_TYPES, TYPE_META, composePayload, draftFromParse, emptyDraft, suggestReminders } from '../format/composer.ts';
 import { detectCourse, groupChannels, matchingChannels, suggestChannels } from '../core/channels.ts';
-import { LIMITS, payloadLength, validatePayload } from '../core/discord.ts';
+import { LIMITS, attachmentProblems, payloadLength, validatePayload } from '../core/discord.ts';
 import { DAY_MS, atTime, fmtDateTime, fmtLong, fromInputValue, toInputValue, tpParts, pad, fromTp } from '../core/time.ts';
 import { editSentPost, navigate, submitPlan, updateConfig, updatePlan, useApp, useNow } from '../data/store.ts';
 import { Btn, Seg, Switch, askConfirm } from '../ui/kit.tsx';
 import { Icon } from '../ui/icons.tsx';
 import { PollEditor } from '../ui/PollEditor.tsx';
+import { AttachmentsEditor } from '../ui/Attachments.tsx';
 import { DiscordPreview } from '../ui/DiscordPreview.tsx';
 
 type WhenMode = 'at' | 'chain' | 'now';
@@ -141,6 +142,7 @@ export function Compose() {
     const list: Array<{ level: 'bad' | 'warn'; text: string }> = [];
     if (!hasContent) return list;
     for (const e of validatePayload(payload)) list.push({ level: 'bad', text: e });
+    for (const e of attachmentProblems(draft.attachments ?? [])) list.push({ level: 'bad', text: e });
     if (!editSent) {
       if (selected.length === 0) list.push({ level: 'bad', text: '還沒有選擇要發到哪些頻道' });
       const chosen = channels.filter((c) => selected.includes(c.id));
@@ -153,7 +155,7 @@ export function Compose() {
     }
     for (const d of detections) if (d.kind === 'assumption' && /不是星期/.test(d.label)) list.push({ level: 'warn', text: d.label });
     return list;
-  }, [payload, selected, channels, when, sendAt, chainTimes.length, detections, hasContent, editSent, now]);
+  }, [payload, selected, channels, when, sendAt, chainTimes.length, detections, hasContent, editSent, now, draft.attachments]);
   const blocking = issues.some((i) => i.level === 'bad');
 
   async function submit(mode: 'schedule' | 'now' | 'draft') {
@@ -350,6 +352,7 @@ export function Compose() {
                   <LinksEditor links={draft.links} onChange={(l) => set('links', l)} />
                 </>
               )}
+              <AttachmentsEditor refs={draft.attachments ?? []} locked={editSent} onChange={(refs) => set('attachments', refs.length ? refs : undefined)} />
               <PollEditor
                 poll={draft.poll}
                 locked={editSent}
@@ -552,7 +555,7 @@ export function Compose() {
             <Seg label="預覽主題" value={previewTheme} onChange={(v) => updateConfig({ previewTheme: v })} options={[{ value: 'dark', label: '深色' }, { value: 'light', label: '淺色' }]} />
           </div>
           {hasContent ? (
-            <DiscordPreview payload={payload} channel={previewChannel} at={previewAt} theme={previewTheme} edited={editSent} />
+            <DiscordPreview payload={payload} channel={previewChannel} at={previewAt} theme={previewTheme} edited={editSent} files={draft.attachments?.map((r) => ({ ...r, ref: r }))} />
           ) : (
             <div class={`dc ${previewTheme === 'light' ? 'light' : ''}`}>
               <div class="dc-channel">

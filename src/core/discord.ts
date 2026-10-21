@@ -32,7 +32,25 @@ export const LIMITS = {
   pollAnswer: 55,
   pollAnswers: 10,
   pollHours: 768,
+  /** Discord 未加成的伺服器，每則訊息的附檔上限 */
+  files: 10,
+  filesBytes: 10 * 1024 * 1024,
 };
+
+export interface SendFile {
+  name: string;
+  type: string;
+  bytes: Uint8Array;
+}
+
+/** 附檔的問題（數量、總大小） */
+export function attachmentProblems(files: Array<{ size: number }>): string[] {
+  const errors: string[] = [];
+  if (files.length > LIMITS.files) errors.push(`附檔最多 ${LIMITS.files} 個`);
+  const total = files.reduce((n, f) => n + f.size, 0);
+  if (total > LIMITS.filesBytes) errors.push(`附檔總大小超過 10 MB（目前 ${(total / 1024 / 1024).toFixed(1)} MB），Discord 會拒收`);
+  return errors;
+}
 
 const SINGLE_EMOJI = /^\p{Extended_Pictographic}(?:\uFE0F|\u20E3|\p{Emoji_Modifier}|\u200D\p{Extended_Pictographic}\uFE0F?)*$/u;
 
@@ -112,15 +130,22 @@ function describe(status: number, body: { message?: string; code?: number; retry
   return `Discord 錯誤 ${status}：${body?.message ?? ''}`.trim();
 }
 
-export async function executeWebhook(url: string, payload: DiscordPayload, fetchImpl: FetchLike = fetch): Promise<SendResult> {
+/** 有附檔時用 multipart/form-data：payload_json + files[n] */
+export function webhookBody(payload: DiscordPayload, files?: SendFile[]): { body: string | FormData; headers: Record<string, string> } {
+  if (!files?.length) return { body: JSON.stringify(payload), headers: { 'Content-Type': 'application/json' } };
+  const form = new FormData();
+  const withAttachments = { ...payload, attachments: files.map((f, i) => ({ id: i, filename: f.name })) };
+  form.append('payload_json', JSON.stringify(withAttachments));
+  files.forEach((f, i) => form.append(`files[${i}]`, new Blob([f.bytes as BlobPart], { type: f.type || 'application/octet-stream' }), f.name));
+  return { body: form, headers: {} };
+}
+
+export async function executeWebhook(url: string, payload: DiscordPayload, fetchImpl: FetchLike = fetch, files?: SendFile[]): Promise<SendResult> {
   if (!parseWebhook(url)) return { ok: false, error: 'Webhook 網址格式不正確', retryable: false };
   let res: Response;
   try {
-    res = await fetchImpl(`${url.replace(/\/$/, '')}?wait=true`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
+    const { body, headers } = webhookBody(payload, files);
+    res = await fetchImpl(`${url.replace(/\/$/, '')}?wait=true`, { method: 'POST', headers, body });
   } catch (err) {
     return { ok: false, error: `無法連線到 Discord：${(err as Error).message}`, retryable: true, networkError: true };
   }

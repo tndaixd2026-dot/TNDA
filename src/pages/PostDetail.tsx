@@ -156,7 +156,7 @@ export function PostDetail({ id }: { id: string }) {
       foot={foot}
     >
       <div class="stack">
-        <DiscordPreview payload={post.payload} channel={chMap.get(post.channels[0])} at={at} theme={previewTheme} edited={edited} />
+        <DiscordPreview payload={post.payload} channel={chMap.get(post.channels[0])} at={at} theme={previewTheme} edited={edited} files={post.attachments?.map((r) => ({ ...r, ref: r }))} />
 
         <section>
           <h3 style={{ fontSize: 14, marginBottom: 8 }}>各頻道的發送結果</h3>

@@ -2,7 +2,8 @@
 // 排程器（GitHub Actions）與瀏覽器（立即發送、準時代發）都走這一套流程。
 
 import type { Channel, Delivery, DiscordPayload, Post, PostStatus, Settings } from './types.ts';
-import type { SendResult } from './discord.ts';
+import type { SendFile, SendResult } from './discord.ts';
+import type { AttachmentRef } from './types.ts';
 
 export const MAX_ATTEMPTS = 3;
 /** 「發送中」超過這個時間仍沒有結果，就視為狀態不明，交給使用者確認，避免重複發送。 */
@@ -13,7 +14,9 @@ export const RETRY_DELAY_MS = 4 * 60 * 1000;
 export interface DeliverContext {
   channels: Map<string, Channel>;
   settings?: Settings;
-  send: (url: string, payload: DiscordPayload) => Promise<SendResult>;
+  send: (url: string, payload: DiscordPayload, files?: SendFile[]) => Promise<SendResult>;
+  /** 讀取並解密附檔 */
+  loadFiles?: (refs: AttachmentRef[]) => Promise<SendFile[]>;
   now?: () => Date;
   sleep?: (ms: number) => Promise<void>;
   log?: (msg: string) => void;
@@ -121,6 +124,16 @@ export async function deliverClaimed(post: Post, actor: string, ctx: DeliverCont
   const sleep = ctx.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const payload = finalPayload(post, ctx.settings);
   const deliveries = { ...post.deliveries };
+  let files: SendFile[] | undefined;
+  let fileError: string | undefined;
+  if (post.attachments?.length) {
+    try {
+      if (!ctx.loadFiles) throw new Error('這個發送端無法讀取附檔');
+      files = await ctx.loadFiles(post.attachments);
+    } catch (err) {
+      fileError = `附檔讀取失敗：${(err as Error).message}`;
+    }
+  }
   for (const ch of post.channels) {
     const d = deliveryOf(post, ch);
     if (d.status !== 'sending' || d.claimedBy !== actor) continue;
@@ -135,10 +148,15 @@ export async function deliverClaimed(post: Post, actor: string, ctx: DeliverCont
       };
       continue;
     }
+    if (fileError) {
+      deliveries[ch] = { ...d, status: 'failed', attempts: d.attempts + 1, retryable: true, error: fileError };
+      ctx.log?.(`  ✗ ${ch}：附檔讀取失敗`);
+      continue;
+    }
     let result: SendResult = { ok: false, error: '尚未發送' };
     // 遇到 429 時在同一次執行內等待後重試（最多 3 次）
     for (let i = 0; i < 3; i++) {
-      result = await ctx.send(channel.webhook, payload);
+      result = await ctx.send(channel.webhook, payload, files);
       if (result.ok || result.status !== 429) break;
       await sleep(Math.min(result.retryAfterMs ?? 2000, 30000));
     }

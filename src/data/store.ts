@@ -1,7 +1,7 @@
 // 全站狀態與操作。畫面只透過這裡讀寫資料。
 
 import { useEffect, useState } from 'preact/hooks';
-import type { Channel, ComposeDraft, Post, Repeat, Settings } from '../core/types.ts';
+import type { AttachmentRef, Channel, ComposeDraft, Post, Repeat, Settings } from '../core/types.ts';
 import { DEFAULT_SETTINGS } from '../core/types.ts';
 import type { WorkflowRun } from '../core/github.ts';
 import { GitHubClient, GitHubError } from '../core/github.ts';
@@ -11,7 +11,7 @@ import { computeStatus, isDue, deliveryOf } from '../core/delivery.ts';
 import { channelMap, sendPost } from '../core/engine.ts';
 import { randomId } from '../core/crypto.ts';
 import { composePayload, TYPE_META } from '../format/composer.ts';
-import { validatePayload } from '../core/discord.ts';
+import { LIMITS, validatePayload, type SendFile } from '../core/discord.ts';
 import type { Backend } from './backend.ts';
 import { DemoBackend } from './backend-demo.ts';
 import { GitHubBackend } from './backend-github.ts';
@@ -442,8 +442,31 @@ function deliverContext() {
   return {
     channels: channelMap(state.channels),
     settings: state.settings,
-    send: (url: string, payload: Post['payload']) => backend!.send(url, payload),
+    send: (url: string, payload: Post['payload'], files?: SendFile[]) => backend!.send(url, payload, files),
+    loadFiles: (refs: AttachmentRef[]) => Promise.all(refs.map((r) => backend!.getAttachment(r))),
   };
+}
+
+const fileUrls = new Map<string, string>();
+
+/** 上傳（加密儲存）一個附檔；檔案太大時回傳錯誤原因 */
+export async function uploadAttachment(file: SendFile): Promise<AttachmentRef> {
+  if (!backend) throw new Error('尚未連線');
+  if (file.bytes.length > LIMITS.filesBytes) throw new Error(`「${file.name}」超過 10 MB，Discord 會拒收`);
+  const ref = await backend.putAttachment(file);
+  fileUrls.set(ref.id, URL.createObjectURL(new Blob([file.bytes as BlobPart], { type: file.type })));
+  return ref;
+}
+
+/** 取得附檔的預覽網址（需要時才下載解密，之後快取） */
+export async function attachmentUrl(ref: AttachmentRef): Promise<string> {
+  const cached = fileUrls.get(ref.id);
+  if (cached) return cached;
+  if (!backend) throw new Error('尚未連線');
+  const f = await backend.getAttachment(ref);
+  const url = URL.createObjectURL(new Blob([f.bytes as BlobPart], { type: f.type }));
+  fileUrls.set(ref.id, url);
+  return url;
 }
 
 function upsertLocal(posts: Post[]) {
@@ -533,6 +556,7 @@ export function buildPost(draft: ComposeDraft, channels: string[], sendAt: strin
     status: 'scheduled',
     payload: composePayload(draft, state.settings),
     draft,
+    attachments: draft.attachments?.length ? draft.attachments : undefined,
     repeat: null,
     deliveries: {},
     createdAt: now,
@@ -628,6 +652,7 @@ export async function updatePlan(id: string, plan: SchedulePlan): Promise<boolea
         channels: plan.channels,
         sendAt,
         draft: plan.draft,
+        attachments: plan.draft.attachments?.length ? plan.draft.attachments : undefined,
         payload,
         status: plan.mode === 'draft' ? 'draft' : 'scheduled',
         repeat: plan.repeat ?? null,

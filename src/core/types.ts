@@ -98,6 +98,14 @@ export interface LinkItem {
 
 export type MentionMode = 'none' | 'everyone' | 'here';
 
+/** 附檔（圖片、PDF、影片）：內容加密存在資料分支的 files/{id}.json */
+export interface AttachmentRef {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+}
+
 export interface PollDraft {
   question: string;
   answers: Array<{ text: string; emoji?: string }>;
@@ -124,6 +132,7 @@ export interface ComposeDraft {
   showCountdown: boolean;
   /** 附加的投票（沒有就是 undefined） */
   poll?: PollDraft;
+  attachments?: AttachmentRef[];
 }
 
 export interface Repeat {
@@ -147,6 +156,8 @@ export interface Post {
   /** 提醒鏈中的說明，例如「截止前 1 天」 */
   seriesLabel?: string;
   repeat?: Repeat | null;
+  /** 跟訊息一起上傳到 Discord 的檔案 */
+  attachments?: AttachmentRef[];
   deliveries: Record<string, Delivery>;
   createdAt: string;
   updatedAt: string;

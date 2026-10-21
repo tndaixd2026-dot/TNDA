@@ -3,6 +3,7 @@
 import type { JSX } from 'preact';
 import type { Channel, DiscordEmbed, DiscordPayload, DiscordPoll } from '../core/types.ts';
 import { pollDurationLabel } from '../format/composer.ts';
+import { PreviewAttachments, type PreviewFile } from './Attachments.tsx';
 import { DiscordMarkdown } from '../format/markdown.tsx';
 import { fmtTime, sameTpDay, addDays, fmtDate } from '../core/time.ts';
 
@@ -103,12 +104,14 @@ export function DiscordPreview({
   at,
   theme = 'dark',
   edited,
+  files,
 }: {
   payload: DiscordPayload;
   channel?: Channel;
   at: number;
   theme?: 'dark' | 'light';
   edited?: boolean;
+  files?: PreviewFile[];
 }) {
   const name = payload.username || 'TNDA 課務小幫手';
   return (
@@ -136,6 +139,7 @@ export function DiscordPreview({
             <span class="dc-stamp">{stamp(at)}</span>
           </div>
           {payload.content ? <DiscordMarkdown text={payload.content} refTime={at} /> : null}
+          {files?.length ? <PreviewAttachments files={files} /> : null}
           {payload.poll ? <Poll poll={payload.poll} /> : null}
           {(payload.embeds ?? []).map((e, i) => (
             <Embed key={i} embed={e} refTime={at} />
