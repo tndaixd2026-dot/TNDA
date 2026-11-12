@@ -305,7 +305,7 @@ function ResultSummary({ pc }: { pc: PublicCourse }) {
       </div>
       <div>
         🏆 股神獎：
-        <strong>{gods.length ? gods.map((i) => `${i.name}（${wan(i.payout)} 萬）`).join('、') : '從缺'}</strong>
+        <strong>{gods.length ? gods.map((i) => `${i.name}（${wan(i.payout)} 萬）`).join('、') : '—'}</strong>
       </div>
     </div>
   );

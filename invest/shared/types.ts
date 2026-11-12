@@ -63,7 +63,7 @@ export interface Results {
   investors: InvestorResult[];
   /** 一飛沖天獎（可並列） */
   rocket: string[];
-  /** 股神獎（可並列；沒人投資時為空） */
+  /** 股神獎（可並列） */
   stockGods: string[];
 }
 

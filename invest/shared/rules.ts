@@ -174,11 +174,11 @@ export function computeResults(
   groupResults.sort((a, b) => a.rank - b.rank || (order.get(a.group) ?? 0) - (order.get(b.group) ?? 0));
   investors.sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name, 'zh-Hant'));
 
-  const topPayout = investors.length ? investors[0].payout : 0;
   return {
     groups: groupResults,
     investors,
     rocket: groupResults.filter((r) => r.rank === 1).map((r) => r.group),
-    stockGods: topPayout > 0 ? investors.filter((r) => r.rank === 1).map((r) => r.name) : [],
+    // 規格：報酬最高者獲獎、同分並列（所有人都是 0 時也照此並列，見 README「待確認」）
+    stockGods: investors.filter((r) => r.rank === 1).map((r) => r.name),
   };
 }

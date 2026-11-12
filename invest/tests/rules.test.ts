@@ -126,9 +126,77 @@ describe('computeResults', () => {
     expect(r.stockGods).toEqual(['x', 'y']);
   });
 
-  it('沒有人投資時沒有股神，但仍有一飛沖天（全部並列）', () => {
-    const r = computeResults(['A', 'B'], [], {});
-    expect(r.stockGods).toEqual([]);
+  it('並列第 2 名時倍率都是 ×2，下一組名次順延（不會拿到 ×1.5）', () => {
+    const five = ['A', 'B', 'C', 'D', 'E'];
+    const members = [
+      { name: 'u', group: 'E' },
+      { name: 'v', group: 'E' },
+      { name: 'w', group: 'A' },
+    ];
+    const allocs = {
+      u: { A: 50 * W, B: 30 * W, C: 20 * W },
+      v: { A: 40 * W, B: 10 * W, C: 20 * W, D: 30 * W },
+      w: { B: 30 * W, C: 30 * W, D: 40 * W },
+    };
+    const r = computeResults(five, members, allocs);
+    const byGroup = Object.fromEntries(r.groups.map((g) => [g.group, g]));
+    // A = 90、B = 70、C = 70、D = 70、E = 0（組員都投完，不倒扣）
+    expect(byGroup.A).toMatchObject({ final: 90 * W, rank: 1, multiplier: 3 });
+    expect(byGroup.B).toMatchObject({ final: 70 * W, rank: 2, multiplier: 2 });
+    expect(byGroup.C).toMatchObject({ final: 70 * W, rank: 2, multiplier: 2 });
+    expect(byGroup.D).toMatchObject({ final: 70 * W, rank: 2, multiplier: 2 });
+    expect(byGroup.E).toMatchObject({ final: 0, rank: 5, multiplier: 1 });
+
+    // 三組並列第 2 → 下一組是第 5 名。再看兩組並列第 2 → 下一組是第 4 名 ×1（不是第 3 名 ×1.5）
+    const r2 = computeResults(
+      ['A', 'B', 'C', 'D'],
+      [{ name: 'z', group: 'D' }],
+      { z: { A: 40 * W, B: 25 * W, C: 25 * W } },
+    );
+    const g2 = Object.fromEntries(r2.groups.map((g) => [g.group, g]));
+    // z 沒投完 10 萬 → D 倒扣 10 萬 = −10 萬
+    expect(g2.A).toMatchObject({ final: 40 * W, rank: 1, multiplier: 3 });
+    expect(g2.B).toMatchObject({ final: 25 * W, rank: 2, multiplier: 2 });
+    expect(g2.C).toMatchObject({ final: 25 * W, rank: 2, multiplier: 2 });
+    expect(g2.D).toMatchObject({ final: -10 * W, penalty: 10 * W, rank: 4, multiplier: 1 });
+    // 個人報酬 = 40×3 + 25×2 + 25×2 = 220 萬（沒花完的 10 萬不計入）
+    expect(r2.investors[0]).toMatchObject({ name: 'z', invested: 90 * W, unspent: 10 * W, payout: 220 * W, rank: 1 });
+  });
+
+  it('個人報酬 = Σ 投入 × 該組倍率，並依報酬排名（同分同名次、下一名順延）', () => {
+    const members = [
+      { name: 'p', group: 'D' },
+      { name: 'q', group: 'D' },
+      { name: 'r', group: 'D' },
+      { name: 's', group: 'C' },
+    ];
+    const allocs = {
+      p: { A: 50 * W, B: 50 * W },
+      q: { A: 50 * W, B: 50 * W },
+      r: { B: 50 * W, C: 50 * W },
+      s: { A: 50 * W, D: 50 * W },
+    };
+    // 各組：A = 150、B = 150（並列第 1，×3）；C = 50、D = 50（並列第 3，×1.5）
+    const r = computeResults(groups, members, allocs);
+    expect(r.groups.map((g) => [g.group, g.final, g.rank, g.multiplier])).toEqual([
+      ['A', 150 * W, 1, 3],
+      ['B', 150 * W, 1, 3],
+      ['C', 50 * W, 3, 1.5],
+      ['D', 50 * W, 3, 1.5],
+    ]);
+    // p、q = 50×3 + 50×3 = 300 萬（並列第 1）；r = 50×3 + 50×1.5 = 225；s = 50×3 + 50×1.5 = 225（並列第 3）
+    expect(r.investors.map((i) => [i.name, i.payout, i.rank])).toEqual([
+      ['p', 300 * W, 1],
+      ['q', 300 * W, 1],
+      ['r', 225 * W, 3],
+      ['s', 225 * W, 3],
+    ]);
+    expect(r.stockGods).toEqual(['p', 'q']);
+  });
+
+  it('所有人報酬都相同（例如都是 0）時依規格全部並列股神；一飛沖天同分也全部並列', () => {
+    const r = computeResults(['A', 'B'], [{ name: 'x', group: 'A' }, { name: 'y', group: 'B' }], {});
+    expect(r.stockGods).toEqual(['x', 'y']);
     expect(r.rocket).toEqual(['A', 'B']);
   });
 

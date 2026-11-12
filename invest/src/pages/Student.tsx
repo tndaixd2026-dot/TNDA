@@ -260,18 +260,17 @@ function CourseMarket(p: CourseMarketProps) {
   function change(group: string, delta: number) {
     const cur = alloc[group] ?? 0;
     if (delta > 0) {
-      const room = Math.min(MAX_PER_GROUP - cur, remaining);
-      if (room <= 0) {
-        p.notify(cur >= MAX_PER_GROUP ? '這組已達上限 50 萬' : '餘額不足，先從別組撤回一些', 'error');
+      // 規格：超過 50 萬上限或餘額不足時擋下並提示（伺服器也會再驗證一次）
+      if (cur + delta > MAX_PER_GROUP) {
+        p.notify(
+          cur >= MAX_PER_GROUP ? '這組已達單組上限 50 萬' : `超過單組上限 50 萬，這組最多還能加 ${wan(MAX_PER_GROUP - cur)} 萬`,
+          'error',
+        );
         return;
       }
-      if (delta > room) {
-        p.notify(
-          cur + room >= MAX_PER_GROUP
-            ? `單組上限 50 萬，已幫你調到 ${wan(cur + room)} 萬`
-            : `餘額只剩 ${wan(room)} 萬，已全部投入`,
-        );
-        delta = room;
+      if (delta > remaining) {
+        p.notify(remaining > 0 ? `餘額不足，只剩 ${wan(remaining)} 萬` : '餘額不足，先從別組撤回一些', 'error');
+        return;
       }
     } else {
       delta = Math.max(delta, -cur);
@@ -404,7 +403,7 @@ function CourseMarket(p: CourseMarketProps) {
                   </button>
                   <button
                     class="btn-round btn-plus"
-                    disabled={!canTrade || cur >= MAX_PER_GROUP}
+                    disabled={!canTrade}
                     onClick={() => change(g.id, p.step)}
                     aria-label={`${short} 增加 ${wan(p.step)} 萬`}
                   >

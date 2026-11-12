@@ -196,14 +196,14 @@ function ResultsView({ pc, points, now }: { pc: PublicCourse; points: HistoryPoi
         <div class="award">
           <div class="award-title">🏆 股神獎</div>
           <div class="award-winners">
-            {gods.length === 0 && <div class="muted">沒有人投資</div>}
-            {gods.map((i) => (
+            {gods.slice(0, 6).map((i) => (
               <div key={i.name} class="award-winner">
                 <span class="award-name">{i.name}</span>
                 <span class="award-sub">{splitGroupLabel(i.group).short}</span>
                 <span class="award-amount">報酬 {wan(i.payout)} 萬</span>
               </div>
             ))}
+            {gods.length > 6 && <div class="award-sub">…等 {gods.length} 人並列</div>}
           </div>
           <ol class="top-investors">
             {top

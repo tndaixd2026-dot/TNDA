@@ -16,6 +16,8 @@ export default defineConfig({
   },
   test: {
     include: ['tests/**/*.test.ts'],
+    // 瀏覽器端對端測試另外用 `npm run test:e2e` 執行
+    exclude: ['tests/e2e/**', 'node_modules/**'],
     environment: 'node',
   },
 });
