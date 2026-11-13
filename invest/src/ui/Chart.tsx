@@ -60,7 +60,8 @@ export function Chart({ groups, points, now, live, shadeFrom, shadeTo, label }: 
 
   const t0 = points[0].t;
   let t1 = live ? Math.max(now, points[points.length - 1].t) : points[points.length - 1].t;
-  if (t1 - t0 < 60_000) t1 = t0 + 60_000;
+  // 剛開盤時至少顯示 15 秒寬，線條不會擠在最左邊
+  if (t1 - t0 < 15_000) t1 = t0 + 15_000;
 
   let lo = 0;
   let hi = 100_000;
