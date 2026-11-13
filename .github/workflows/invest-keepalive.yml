@@ -1,0 +1,34 @@
+# 期末提報「即時投資」：Supabase 免費方案 7 天沒有使用會自動暫停。
+# 每 3 天呼叫一次 invest_state，讓專案保持喚醒（invest/deploy.config.json 還沒設定時自動略過）。
+name: 即時投資：保持 Supabase 喚醒
+
+on:
+  schedule:
+    - cron: '23 3 */3 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    name: 呼叫一次 invest_state
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: invest/deploy.config.json
+          sparse-checkout-cone-mode: false
+      - name: 呼叫 Supabase
+        run: |
+          url=$(jq -r '.supabaseUrl' invest/deploy.config.json)
+          key=$(jq -r '.supabaseAnonKey' invest/deploy.config.json)
+          if [ -z "$url" ]; then
+            echo "尚未設定 Supabase，略過"
+            exit 0
+          fi
+          auth=()
+          case "$key" in eyJ*) auth=(-H "Authorization: Bearer $key") ;; esac
+          curl -fsS -X POST "$url/rest/v1/rpc/invest_state" \
+            -H "apikey: $key" "${auth[@]}" -H 'content-type: application/json' \
+            -d '{}' -o /dev/null -w 'HTTP %{http_code}\n'
