@@ -12,6 +12,11 @@ export class ApiError extends Error {
   }
 }
 
+/** HTTP 標頭只能放 ASCII，中文密碼要先編碼 */
+export function adminHeaders(password: string): Record<string, string> {
+  return { 'x-admin-password': encodeURIComponent(password) };
+}
+
 export async function api<T>(
   path: string,
   opts: { method?: 'GET' | 'POST'; body?: unknown; admin?: string } = {},
@@ -22,7 +27,7 @@ export async function api<T>(
       method: opts.method ?? (opts.body === undefined ? 'GET' : 'POST'),
       headers: {
         ...(opts.body !== undefined ? { 'content-type': 'application/json' } : {}),
-        ...(opts.admin ? { 'x-admin-password': opts.admin } : {}),
+        ...(opts.admin ? adminHeaders(opts.admin) : {}),
       },
       body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
     });

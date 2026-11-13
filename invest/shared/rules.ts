@@ -1,5 +1,5 @@
 // 投資規則與結算。純函式、無副作用：伺服器用它做權威驗證，前端只拿來做即時提示。
-import type { Allocation, GroupResult, InvestorResult, Phase, Results } from './types.ts';
+import type { Allocation, GroupResult, InvestorResult, Phase, PublicResults, Results } from './types.ts';
 
 /** 每人每堂課的虛擬資金 */
 export const BUDGET = 1_000_000;
@@ -97,13 +97,16 @@ export interface Member {
 /**
  * 封盤結算。
  * - 各組最終金額 = 投進來的總額 − 自己組員沒花完的錢
- * - 依最終金額排名（同分同名次、下一名順延），決定倍率
+ *   （只倒扣這一場有登入過的人；整場沒登入的缺席者不倒扣。有投資的人一定算有登入）
+ * - 依最終金額排名（同分同名次、下一名順延），決定倍率；最高的組即使是負數也得一飛沖天獎
  * - 個人報酬 = Σ（投在該組的金額 × 該組倍率），沒花完的錢不計入
+ * - 個人名次只在有投資的人之間排（分母只算有投資的人）
  */
 export function computeResults(
   groups: readonly string[],
   members: readonly Member[],
   allocs: Readonly<Record<string, Allocation>>,
+  present: (name: string) => boolean = () => true,
 ): Results {
   const order = new Map(groups.map((g, i) => [g, i]));
   const raw: Record<string, number> = {};
@@ -129,7 +132,9 @@ export function computeResults(
   }
 
   for (const m of members) {
-    const unspent = BUDGET - (invested.get(m.name) ?? 0);
+    const inv = invested.get(m.name) ?? 0;
+    const unspent = BUDGET - inv;
+    if (inv === 0 && !present(m.name)) continue; // 缺席、沒登入 → 不倒扣
     if (unspent > 0 && m.group in penalty) {
       penalty[m.group] += unspent;
       deductions[m.group].push({ name: m.name, unspent });
@@ -149,7 +154,8 @@ export function computeResults(
   }));
   const mult = new Map(groupResults.map((r) => [r.group, r.multiplier]));
 
-  const payouts = members.map((m) => {
+  const investing = members.filter((m) => (invested.get(m.name) ?? 0) > 0);
+  const payouts = investing.map((m) => {
     const alloc = allocs[m.name] ?? {};
     let payout = 0;
     for (const [g, amount] of Object.entries(alloc)) {
@@ -159,7 +165,7 @@ export function computeResults(
     return payout;
   });
   const investorRanks = competitionRanks(payouts);
-  const investors: InvestorResult[] = members.map((m, i) => {
+  const investors: InvestorResult[] = investing.map((m, i) => {
     const inv = invested.get(m.name) ?? 0;
     return {
       name: m.name,
@@ -178,7 +184,22 @@ export function computeResults(
     groups: groupResults,
     investors,
     rocket: groupResults.filter((r) => r.rank === 1).map((r) => r.group),
-    // 規格：報酬最高者獲獎、同分並列（所有人都是 0 時也照此並列，見 README「待確認」）
+    // 規格：報酬最高者獲獎、同分並列
     stockGods: investors.filter((r) => r.rank === 1).map((r) => r.name),
+  };
+}
+
+/** 去掉學生姓名明細，給大螢幕與學生端。 */
+export function toPublicResults(r: Results): PublicResults {
+  const byName = new Map(r.investors.map((i) => [i.name, i]));
+  return {
+    groups: r.groups.map(({ group, raw, penalty, final, rank, multiplier }) => ({ group, raw, penalty, final, rank, multiplier })),
+    rocket: r.rocket,
+    stockGods: r.stockGods.map((name) => ({
+      name,
+      group: byName.get(name)?.group ?? '',
+      payout: byName.get(name)?.payout ?? 0,
+    })),
+    investorCount: r.investors.length,
   };
 }

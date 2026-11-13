@@ -11,6 +11,7 @@ import {
   computeResults,
   groupTotals,
   sumAlloc,
+  toPublicResults,
   type Member,
 } from '../shared/rules.ts';
 import { COURSE_CSV_LABEL, nameKey, normalizeName, parseRosterCsv, sortGroups } from '../shared/roster.ts';
@@ -44,14 +45,18 @@ export interface CourseState {
   darkHistoryLen: number | null;
   /** 封盤時凍結的結算結果 */
   results: Results | null;
+  /** 封盤前的狀態，取消封盤時用來還原 */
+  closedFrom: 'open' | 'dark' | null;
+  /** 封盤當下暗盤還剩多少時間 */
+  darkLeftMs: number | null;
 }
 
 export interface AppState {
   version: 1;
   active: CourseId;
   roster: RosterEntry[];
-  /** nameKey → 最後登入時間 */
-  logins: Record<string, number>;
+  /** 各場有登入過的人：nameKey → 時間。沒登入過的人封盤時不倒扣 */
+  joined: Record<CourseId, Record<string, number>>;
   courses: Record<CourseId, CourseState>;
 }
 
@@ -100,6 +105,8 @@ function freshCourse(): CourseState {
     history: [],
     darkHistoryLen: null,
     results: null,
+    closedFrom: null,
+    darkLeftMs: null,
   };
 }
 
@@ -153,7 +160,7 @@ function normalizeLoaded(raw: unknown, seed: RosterEntry[]): AppState {
     version: 1,
     active: isCourseId(s.active) ? s.active : 'wed',
     roster: s.roster.length ? s.roster : seed,
-    logins: s.logins ?? {},
+    joined: { wed: s.joined?.wed ?? {}, thu: s.joined?.thu ?? {} },
     courses,
   };
 }
@@ -170,7 +177,7 @@ export function createStore(opts: StoreOptions) {
     version: 1,
     active: 'wed',
     roster: opts.seed,
-    logins: {},
+    joined: { wed: {}, thu: {} },
     courses: { wed: freshCourse(), thu: freshCourse() },
   };
 
@@ -311,9 +318,9 @@ export function createStore(opts: StoreOptions) {
         members: memberCount.get(id) ?? 0,
       })),
       students: members.length,
-      joined: members.filter((m) => state.logins[nameKey(m.name)] !== undefined).length,
+      joined: members.filter((m) => isPresent(course, m.name)).length,
       fullyInvested: members.filter((m) => sumAlloc(cs.alloc[m.name]) === BUDGET).length,
-      results: cs.phase === 'closed' ? cs.results : null,
+      results: cs.phase === 'closed' && cs.results ? toPublicResults(cs.results) : null,
     };
   }
 
@@ -333,11 +340,41 @@ export function createStore(opts: StoreOptions) {
     const alloc = { ...(cs.alloc[name] ?? {}) };
     const invested = sumAlloc(alloc);
     let result: MyCourse['result'] = null;
+    let deducted: number | null = null;
     if (cs.phase === 'closed' && cs.results) {
       const r = cs.results.investors.find((i) => i.name === name);
       if (r) result = { payout: r.payout, rank: r.rank, of: cs.results.investors.length };
+      const g = cs.results.groups.find((x) => x.group === group);
+      deducted = g?.deductions.find((d) => d.name === name)?.unspent ?? 0;
     }
-    return { course, group, alloc, invested, remaining: BUDGET - invested, result };
+    return { course, group, alloc, invested, remaining: BUDGET - invested, result, deducted };
+  }
+
+  /** 這一場有沒有登入過（有投資也算） */
+  function isPresent(course: CourseId, name: string): boolean {
+    return state.joined[course][nameKey(name)] !== undefined || sumAlloc(state.courses[course].alloc[name]) > 0;
+  }
+
+  /**
+   * 記錄「這些人有出席目前這一場」：登入、學生頁連線中、或場次切換時頁面開著的人。
+   * 只記錄名單上屬於目前場次的人。
+   */
+  function markPresent(names: Iterable<string>) {
+    const course = state.active;
+    let changed = false;
+    for (const input of names) {
+      const name = resolveName(input);
+      if (!name || !index.membership.get(name)?.[course]) continue;
+      const key = nameKey(name);
+      if (state.joined[course][key] === undefined) {
+        state.joined[course][key] = now();
+        changed = true;
+      }
+    }
+    if (changed) {
+      emit({ type: 'state' });
+      scheduleSave();
+    }
   }
 
   function resolveName(input: unknown): string | null {
@@ -365,9 +402,7 @@ export function createStore(opts: StoreOptions) {
   function login(input: unknown): Result<MeState> {
     const name = resolveName(input);
     if (!name) return notInRoster(input);
-    state.logins[nameKey(name)] = now();
-    scheduleSave();
-    emit({ type: 'state' });
+    markPresent([name]);
     return ok(getMe(name)!);
   }
 
@@ -400,6 +435,7 @@ export function createStore(opts: StoreOptions) {
       else next[g] = a;
       if (Object.keys(next).length) cs.alloc[name] = next;
       else delete cs.alloc[name];
+      if (state.joined[course][nameKey(name)] === undefined) state.joined[course][nameKey(name)] = now();
       recordPoint(course);
       emit({ type: 'state' });
       emit({ type: 'me', names: [name] });
@@ -448,7 +484,9 @@ export function createStore(opts: StoreOptions) {
   function doClose(course: CourseId) {
     const cs = state.courses[course];
     clearDarkTimer(course);
-    cs.results = computeResults(index.groups[course], index.members[course], cs.alloc);
+    cs.closedFrom = cs.phase === 'dark' ? 'dark' : 'open';
+    cs.darkLeftMs = cs.phase === 'dark' && cs.darkEndsAt !== null ? Math.max(0, cs.darkEndsAt - now()) : null;
+    cs.results = computeResults(index.groups[course], index.members[course], cs.alloc, (name) => isPresent(course, name));
     cs.phase = 'closed';
     cs.closedAt = now();
     recordPoint(course, 'close');
@@ -466,11 +504,43 @@ export function createStore(opts: StoreOptions) {
     return ok(null);
   }
 
+  /**
+   * 取消封盤（誤按時用）：撤回結算，投資全部保留。
+   * 若是在暗盤中手動封盤、暗盤還有剩餘時間，就回到暗盤繼續倒數；否則回到開盤中。
+   */
+  function reopenMarket(course: CourseId): Result<null> {
+    const cs = state.courses[course];
+    if (cs.phase !== 'closed') return fail(409, 'bad_phase', '只有「已封盤」可以取消封盤');
+    const last = cs.history[cs.history.length - 1];
+    if (last?.mark === 'close') cs.history.pop();
+    cs.results = null;
+    cs.closedAt = null;
+    if (cs.closedFrom === 'dark' && (cs.darkLeftMs ?? 0) > 0) {
+      cs.phase = 'dark';
+      cs.darkEndsAt = now() + (cs.darkLeftMs ?? 0);
+      scheduleDarkTimer(course);
+    } else {
+      cs.phase = 'open';
+      cs.darkAt = null;
+      cs.darkEndsAt = null;
+      cs.darkHistoryLen = null;
+    }
+    cs.closedFrom = null;
+    cs.darkLeftMs = null;
+    emit({ type: 'state' });
+    emit({ type: 'history' });
+    emit({ type: 'me', names: 'all' });
+    scheduleSave();
+    log(`${courseLabel(course)} 取消封盤，回到${cs.phase === 'dark' ? '暗盤' : '開盤中'}`);
+    return ok(null);
+  }
+
   function phaseAction(course: unknown, action: unknown): Result<null> {
     if (!isCourseId(course)) return fail(400, 'bad_course', '場次錯誤');
     if (action === 'open') return openMarket(course);
     if (action === 'dark') return goDark(course);
     if (action === 'close') return closeMarket(course);
+    if (action === 'reopen') return reopenMarket(course);
     return fail(400, 'bad_action', '未知的操作');
   }
 
@@ -478,6 +548,8 @@ export function createStore(opts: StoreOptions) {
     if (!isCourseId(course)) return fail(400, 'bad_course', '場次錯誤');
     clearDarkTimer(course);
     state.courses[course] = freshCourse();
+    // 彩排時登入過的人不算正式出席（之後重新登入或頁面開著就會再被記錄）
+    state.joined[course] = {};
     emit({ type: 'state' });
     emit({ type: 'history' });
     emit({ type: 'me', names: 'all' });
@@ -579,9 +651,11 @@ export function createStore(opts: StoreOptions) {
             group: m.group,
             invested,
             remaining: BUDGET - invested,
-            joined: state.logins[nameKey(m.name)] !== undefined,
+            joined: isPresent(c, m.name),
           };
         }),
+        reopenTo: cs.phase === 'closed' ? (cs.closedFrom === 'dark' && (cs.darkLeftMs ?? 0) > 0 ? 'dark' : 'open') : null,
+        reopenDarkLeftMs: cs.phase === 'closed' && cs.closedFrom === 'dark' ? cs.darkLeftMs : null,
       };
     }
     return { active: state.active, darkMs, roster: state.roster, courses };
@@ -609,7 +683,7 @@ export function createStore(opts: StoreOptions) {
       ]),
       [],
       [`${courseLabel(course)} 個人報酬`],
-      ['名次', '姓名', '組別', '已投資', '未花完', '報酬'],
+      ['名次（只算有投資的人）', '姓名', '組別', '已投資', '未花完', '報酬'],
       ...r.investors.map((i) => [i.rank, i.name, i.group, i.invested, i.unspent, i.payout]),
       [],
       ['一飛沖天獎', r.rocket.join('、')],
@@ -631,6 +705,11 @@ export function createStore(opts: StoreOptions) {
     getPublic,
     getMe,
     resolveName,
+    markPresent,
+    /** 完整結算（含姓名），管理員用 */
+    results(course: unknown): Results | null {
+      return isCourseId(course) ? state.courses[course].results : null;
+    },
     visibleHistory,
     login,
     invest,

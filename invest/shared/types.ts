@@ -56,15 +56,35 @@ export interface InvestorResult {
   rank: number;
 }
 
+/** 完整結算（含學生姓名），只給管理員（CSV／管理員 API）。 */
 export interface Results {
   /** 依名次排序 */
   groups: GroupResult[];
-  /** 依名次排序 */
+  /** 只列有投資的人（個人名次的分母），依名次排序 */
   investors: InvestorResult[];
-  /** 一飛沖天獎（可並列） */
+  /** 一飛沖天獎（可並列；最高的組即使是負數也得獎） */
   rocket: string[];
   /** 股神獎（可並列） */
   stockGods: string[];
+}
+
+/** 公開的組別結果：只有各組金額，不列學生姓名。 */
+export interface PublicGroupResult {
+  group: string;
+  raw: number;
+  penalty: number;
+  final: number;
+  rank: number;
+  multiplier: number;
+}
+
+/** 公開的結算結果（大螢幕、學生端）。 */
+export interface PublicResults {
+  groups: PublicGroupResult[];
+  rocket: string[];
+  stockGods: { name: string; group: string; payout: number }[];
+  /** 有投資的人數（個人名次的分母） */
+  investorCount: number;
 }
 
 export interface PublicGroup {
@@ -86,9 +106,10 @@ export interface PublicCourse {
   /** 依組別順序（第 1 組、第 2 組…） */
   groups: PublicGroup[];
   students: number;
+  /** 這一場有登入過的人數 */
   joined: number;
   fullyInvested: number;
-  results: Results | null;
+  results: PublicResults | null;
 }
 
 export interface PublicState {
@@ -105,7 +126,10 @@ export interface MyCourse {
   alloc: Allocation;
   invested: number;
   remaining: number;
+  /** 封盤後：有投資才有個人名次（分母只算有投資的人） */
   result: { payout: number; rank: number; of: number } | null;
+  /** 封盤後：因為自己沒投完而從自己那組倒扣的金額；沒登入過的人不倒扣 */
+  deducted: number | null;
 }
 
 export interface MeState {
@@ -118,6 +142,7 @@ export interface AdminStudent {
   group: string;
   invested: number;
   remaining: number;
+  /** 這一場有沒有登入過（沒登入過的人不倒扣） */
   joined: boolean;
 }
 
@@ -125,6 +150,10 @@ export interface AdminCourse {
   phase: Phase;
   groups: string[];
   students: AdminStudent[];
+  /** 取消封盤後會回到哪個狀態（只有已封盤時有值） */
+  reopenTo: 'open' | 'dark' | null;
+  /** 回到暗盤時剩下的倒數 */
+  reopenDarkLeftMs: number | null;
 }
 
 export interface AdminOverview {

@@ -78,8 +78,22 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
   throw new HttpError(400, '資料格式錯誤');
 }
 
+/** 密碼比對前先正規化：去掉前後空白、全形半形統一（中文密碼也可以）。 */
+function normalizePassword(s: string): string {
+  return s.normalize('NFKC').trim();
+}
+
 function digest(s: string): Buffer {
-  return createHash('sha256').update(s).digest();
+  return createHash('sha256').update(normalizePassword(s)).digest();
+}
+
+/** HTTP 標頭只能放 ASCII，前端會把密碼 encodeURIComponent 後再送。 */
+function decodeHeader(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 export function createApp(store: Store, opts: AppOptions): Server {
@@ -92,7 +106,14 @@ export function createApp(store: Store, opts: AppOptions): Server {
     const header = req.headers['x-admin-password'];
     const given = Array.isArray(header) ? header[0] : header;
     if (!given) return false;
-    return timingSafeEqual(digest(given), adminDigest);
+    return timingSafeEqual(digest(decodeHeader(given)), adminDigest);
+  }
+
+  /** 目前開著學生頁的人都算出席這一場（切換場次、重置後呼叫） */
+  function markConnectedPresent() {
+    const names: string[] = [];
+    for (const c of clients) if (c.name) names.push(c.name);
+    store.markPresent(names);
   }
 
   // ---- SSE ----
@@ -167,6 +188,7 @@ export function createApp(store: Store, opts: AppOptions): Server {
     }
     if (client.history) write(client, 'history', historyPayload());
     clients.add(client);
+    if (client.name) store.markPresent([client.name]);
     const drop = () => clients.delete(client);
     req.on('close', drop);
     res.on('error', drop);
@@ -283,6 +305,7 @@ export function createApp(store: Store, opts: AppOptions): Server {
       if (method === 'POST' && path === '/api/admin/active') {
         const body = await readJson(req);
         const r = store.setActive(body.course);
+        if (r.ok) markConnectedPresent();
         if (r.ok) sendJson(res, 200, store.adminOverview());
         else sendError(res, r.status, r.code, r.message);
         return;
@@ -297,6 +320,7 @@ export function createApp(store: Store, opts: AppOptions): Server {
       if (method === 'POST' && path === '/api/admin/reset') {
         const body = await readJson(req);
         const r = store.reset(body.course);
+        if (r.ok) markConnectedPresent();
         if (r.ok) sendJson(res, 200, store.adminOverview());
         else sendError(res, r.status, r.code, r.message);
         return;
@@ -311,6 +335,12 @@ export function createApp(store: Store, opts: AppOptions): Server {
         const r = store.applyRoster(body.csv);
         if (r.ok) sendJson(res, 200, store.adminOverview());
         else sendError(res, r.status, r.code, r.message);
+        return;
+      }
+      if (method === 'GET' && path === '/api/admin/results') {
+        const results = store.results(url.searchParams.get('course'));
+        if (!results) sendError(res, 404, 'no_results', '這一場還沒有結算結果');
+        else sendJson(res, 200, results);
         return;
       }
       if (method === 'GET' && path === '/api/admin/results.csv') {

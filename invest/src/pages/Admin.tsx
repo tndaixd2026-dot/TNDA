@@ -10,7 +10,7 @@ import {
   type PublicCourse,
   type RosterPreview,
 } from '../../shared/types.ts';
-import { ApiError, api, storageGet, storageSet, useLive, useNow } from '../api.ts';
+import { ApiError, adminHeaders, api, storageGet, storageSet, useLive, useNow } from '../api.ts';
 import { Card, ConnectionDot, PhaseBadge, useToast } from '../ui/common.tsx';
 
 const PW_KEY = 'invest.admin';
@@ -145,14 +145,23 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
     void act('/api/admin/active', { course: c }, `已切換到${courseLabel(c)}`);
   }
 
-  function phase(action: 'open' | 'dark' | 'close') {
+  const reopenTo = ov.courses[course].reopenTo;
+  const reopenLeft = ov.courses[course].reopenDarkLeftMs;
+  const reopenLabel = reopenTo === 'dark' && reopenLeft ? `暗盤（剩 ${countdown(reopenLeft)}）` : '開盤中';
+
+  function phase(action: 'open' | 'dark' | 'close' | 'reopen') {
     const msg = {
       open: `${courseLabel(course)}開盤？開盤後學生就能開始投資。`,
       dark: `進入暗盤？${darkLabel}後自動封盤，期間大螢幕與學生端都會隱藏各組金額與排名。`,
       close: `立即封盤並揭曉${courseLabel(course)}的結果？封盤後無法再投資。`,
+      reopen: `取消封盤？已揭曉的結果會撤回，回到「${reopenLabel}」，所有人的投資都保留。`,
     }[action];
     if (!confirm(msg)) return;
-    void act('/api/admin/phase', { course, action }, { open: '已開盤', dark: '已進入暗盤', close: '已封盤，結果已揭曉' }[action]);
+    void act(
+      '/api/admin/phase',
+      { course, action },
+      { open: '已開盤', dark: '已進入暗盤', close: '已封盤，結果已揭曉', reopen: `已取消封盤，回到${reopenLabel}` }[action],
+    );
   }
 
   function reset() {
@@ -163,7 +172,7 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
 
   async function downloadResults() {
     try {
-      const res = await fetch(`/api/admin/results.csv?course=${course}`, { headers: { 'x-admin-password': pw } });
+      const res = await fetch(`/api/admin/results.csv?course=${course}`, { headers: adminHeaders(pw) });
       if (!res.ok) throw new Error('下載失敗');
       await downloadBlob(await res.blob(), `投資結果-${COURSE_CSV_LABEL[course]}.csv`);
     } catch (err) {
@@ -225,6 +234,9 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
           <button class="btn btn-danger btn-lg" disabled={busy || (pc.phase !== 'open' && pc.phase !== 'dark')} onClick={() => phase('close')}>
             ■ 立即封盤
           </button>
+          <button class="btn btn-lg" disabled={busy || pc.phase !== 'closed'} onClick={() => phase('reopen')}>
+            ↺ 取消封盤{pc.phase === 'closed' ? `（回到${reopenLabel}）` : ''}
+          </button>
         </div>
         {pc.phase === 'closed' && (
           <div class="control-results">
@@ -254,7 +266,7 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
         </div>
         {pending.length > 0 && (
           <>
-            <h3 class="sub-title">還沒投完（封盤時會倒扣）</h3>
+            <h3 class="sub-title">還沒投完（有登入的人封盤時會從自己組倒扣；沒登入過的不倒扣）</h3>
             <table class="data-table">
               <thead>
                 <tr>
@@ -270,7 +282,7 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
                     <td>{s.name}</td>
                     <td>{splitGroupLabel(s.group).short}</td>
                     <td class="num">{wan(s.remaining)} 萬</td>
-                    <td>{s.joined ? '✔' : <span class="muted">未登入</span>}</td>
+                    <td>{s.joined ? '✔ 會倒扣' : <span class="muted">未登入・不倒扣</span>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -297,7 +309,7 @@ function ResultSummary({ pc }: { pc: PublicCourse }) {
   const r = pc.results;
   if (!r) return null;
   const rocket = r.rocket.map((g) => splitGroupLabel(g).short).join('、');
-  const gods = r.investors.filter((i) => r.stockGods.includes(i.name));
+  const gods = r.stockGods;
   return (
     <div class="result-summary">
       <div>
@@ -305,7 +317,7 @@ function ResultSummary({ pc }: { pc: PublicCourse }) {
       </div>
       <div>
         🏆 股神獎：
-        <strong>{gods.length ? gods.map((i) => `${i.name}（${wan(i.payout)} 萬）`).join('、') : '—'}</strong>
+        <strong>{gods.length ? gods.map((i) => `${i.name}（${wan(i.payout)} 萬）`).join('、') : '沒有人投資'}</strong>
       </div>
     </div>
   );

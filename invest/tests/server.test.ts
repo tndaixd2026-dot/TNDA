@@ -6,10 +6,12 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createApp } from '../server/app.ts';
 import { createStore, type Store } from '../server/store.ts';
-import type { HistoryPoint, MeState, PublicState, RosterEntry } from '../shared/types.ts';
+import type { HistoryPoint, MeState, PublicState, Results, RosterEntry } from '../shared/types.ts';
 
 const W = 10_000;
-const ADMIN = 'secret';
+// 管理員密碼可以是中文（標頭會先 encodeURIComponent）
+const ADMIN = '測試老師';
+const adminHeader = { 'x-admin-password': encodeURIComponent(ADMIN) };
 
 // 甲同時修兩堂課，且兩堂課組別不同
 const roster: RosterEntry[] = [
@@ -54,7 +56,7 @@ async function start(opts: { darkMs?: number; dataDir?: string | null } = {}): P
 async function post(ctx: Ctx, path: string, body: unknown, admin = false) {
   const res = await fetch(ctx.base + path, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...(admin ? { 'x-admin-password': ADMIN } : {}) },
+    headers: { 'content-type': 'application/json', ...(admin ? adminHeader : {}) },
     body: JSON.stringify(body),
   });
   return { status: res.status, body: (await res.json()) as Record<string, unknown> };
@@ -67,6 +69,9 @@ const phase = (ctx: Ctx, course: string, action: string) => post(ctx, '/api/admi
 const invest = (ctx: Ctx, name: string, group: string, amount: number, course = 'wed') =>
   post(ctx, '/api/invest', { name, course, group, amount });
 const asMe = (r: { body: Record<string, unknown> }) => r.body as unknown as MeState;
+/** 管理員才看得到的完整結算（含姓名） */
+const adminResults = async (ctx: Ctx, course: string) =>
+  (await (await fetch(`${ctx.base}/api/admin/results?course=${course}`, { headers: adminHeader })).json()) as Results;
 
 interface SseEvent {
   event: string;
@@ -261,9 +266,8 @@ describe('投資規則（伺服器端驗證）', () => {
     expect(s.courses.thu.groups.find((g) => g.id === '第3組')?.total).toBe(50 * W);
     await phase(ctx, 'wed', 'close');
     await phase(ctx, 'thu', 'close');
-    const closed = await getState(ctx);
-    const wed1 = closed.courses.wed.results!.groups.find((g) => g.group === '第1組')!;
-    const thu2 = closed.courses.thu.results!.groups.find((g) => g.group === '第2組')!;
+    const wed1 = (await adminResults(ctx, 'wed')).groups.find((g) => g.group === '第1組')!;
+    const thu2 = (await adminResults(ctx, 'thu')).groups.find((g) => g.group === '第2組')!;
     expect(wed1.deductions.find((d) => d.name === '甲')).toBeUndefined();
     expect(thu2.deductions.find((d) => d.name === '甲')).toEqual({ name: '甲', unspent: 50 * W });
   });
@@ -277,10 +281,11 @@ describe('封盤結算', () => {
     await invest(ctx, '甲', '第3組', 50 * W);
     await invest(ctx, '乙', '第1組', 50 * W);
     await invest(ctx, '乙', '第3組', 30 * W); // 乙剩 20 萬 → 第2組倒扣 20 萬
-    // 丙完全沒投 → 第3組倒扣 100 萬
+    // 丙有登入但完全沒投 → 第3組倒扣 100 萬
+    expect((await post(ctx, '/api/login', { name: '丙' })).status).toBe(200);
     await phase(ctx, 'wed', 'close');
 
-    const r = (await getState(ctx)).courses.wed.results!;
+    const r = await adminResults(ctx, 'wed');
     expect(r.groups.map((g) => [g.group, g.raw, g.penalty, g.final, g.rank, g.multiplier])).toEqual([
       ['第1組', 50 * W, 0, 50 * W, 1, 3],
       ['第2組', 50 * W, 20 * W, 30 * W, 2, 2],
@@ -289,17 +294,63 @@ describe('封盤結算', () => {
     expect(r.groups[1].deductions).toEqual([{ name: '乙', unspent: 20 * W }]);
     expect(r.groups[2].deductions).toEqual([{ name: '丙', unspent: 100 * W }]);
     expect(r.rocket).toEqual(['第1組']);
-    // 甲 = 50×2 + 50×1.5 = 175 萬；乙 = 50×3 + 30×1.5 = 195 萬（沒花完的 20 萬不計入）；丙 = 0
+    // 甲 = 50×2 + 50×1.5 = 175 萬；乙 = 50×3 + 30×1.5 = 195 萬（沒花完的 20 萬不計入）
+    // 個人名次只算有投資的人：丙沒投資，不列入（分母 = 2）
     expect(r.investors.map((i) => [i.name, i.payout, i.rank])).toEqual([
       ['乙', 195 * W, 1],
       ['甲', 175 * W, 2],
-      ['丙', 0, 3],
     ]);
     expect(r.stockGods).toEqual(['乙']);
-    expect((await getMe(ctx, '甲')).courses.wed?.result).toEqual({ payout: 175 * W, rank: 2, of: 3 });
+    expect((await getMe(ctx, '甲')).courses.wed).toMatchObject({ result: { payout: 175 * W, rank: 2, of: 2 }, deducted: 0 });
+    expect((await getMe(ctx, '乙')).courses.wed?.deducted).toBe(20 * W);
+    expect((await getMe(ctx, '丙')).courses.wed).toMatchObject({ result: null, deducted: 100 * W });
 
-    const csv = await (await fetch(ctx.base + '/api/admin/results.csv?course=wed', { headers: { 'x-admin-password': ADMIN } })).text();
+    // 公開的結果（大螢幕、學生端）只有各組金額，不列出被倒扣的學生姓名
+    const pub = (await getState(ctx)).courses.wed.results!;
+    expect(pub.groups.map((g) => [g.group, g.penalty, g.final])).toEqual([
+      ['第1組', 0, 50 * W],
+      ['第2組', 20 * W, 30 * W],
+      ['第3組', 100 * W, -20 * W],
+    ]);
+    expect(pub.stockGods).toEqual([{ name: '乙', group: '第2組', payout: 195 * W }]);
+    expect(pub.investorCount).toBe(2);
+    const publicJson = JSON.stringify(await getState(ctx));
+    expect(publicJson).not.toContain('丙');
+    expect(publicJson).not.toContain('甲');
+
+    const csv = await (await fetch(ctx.base + '/api/admin/results.csv?course=wed', { headers: adminHeader })).text();
     expect(csv).toContain('股神獎,乙');
+    expect(csv).toContain('丙 1000000');
+  });
+
+  it('缺席、整場沒登入的同學不倒扣；有登入（含頁面開著時切換到這一場）就會倒扣', async () => {
+    const ctx = await start();
+    // 目前場次是週三。丁只修週四，先把學生頁開著（還在週三時不算出席週四）
+    const ding = await sse(ctx, `name=${encodeURIComponent('丁')}`);
+    await ding.waitFor((e) => e.event === 'me', 1000);
+    await phase(ctx, 'thu', 'open');
+    expect((await getState(ctx)).courses.thu.joined).toBe(0);
+    // 切換到週四：頁面開著的丁算出席；戊從頭到尾沒登入
+    await post(ctx, '/api/admin/active', { course: 'thu' }, true);
+    expect((await getState(ctx)).courses.thu.joined).toBe(1);
+    await invest(ctx, '甲', '第1組', 50 * W, 'thu');
+    await invest(ctx, '甲', '第3組', 50 * W, 'thu');
+    await phase(ctx, 'thu', 'close');
+
+    const r = await adminResults(ctx, 'thu');
+    const byGroup = Object.fromEntries(r.groups.map((g) => [g.group, g]));
+    expect(byGroup['第1組']).toMatchObject({ raw: 50 * W, penalty: 100 * W, final: -50 * W }); // 丁有出席、沒投 → 倒扣
+    expect(byGroup['第3組']).toMatchObject({ raw: 50 * W, penalty: 0, final: 50 * W }); // 戊缺席 → 不倒扣
+    expect(byGroup['第3組'].deductions).toEqual([]);
+    expect(r.investors.map((i) => i.name)).toEqual(['甲']);
+    expect((await getMe(ctx, '戊')).courses.thu).toMatchObject({ result: null, deducted: 0 });
+
+    // 重置（彩排後）會清掉出席紀錄，彩排登入過的人正式時沒來就不會被扣
+    await post(ctx, '/api/login', { name: '甲' });
+    expect((await getState(ctx)).courses.thu.joined).toBe(2);
+    await post(ctx, '/api/admin/reset', { course: 'thu' }, true);
+    // 丁的頁面仍開著 → 重置後馬上又算出席；甲的登入紀錄被清掉
+    expect((await getState(ctx)).courses.thu.joined).toBe(1);
   });
 
   it('規格範例：兩組並列第 1 都是 ×3，下一組是第 3 名 ×1.5；個人報酬同分並列', async () => {
@@ -313,7 +364,7 @@ describe('封盤結算', () => {
     await invest(ctx, '丙', '第1組', 50 * W);
     await invest(ctx, '丙', '第2組', 50 * W);
     await phase(ctx, 'wed', 'close');
-    const r = (await getState(ctx)).courses.wed.results!;
+    const r = await adminResults(ctx, 'wed');
     // 第1組 = 100 − 20 = 80、第2組 = 100 − 20 = 80（並列第 1）、第3組 = 60（第 3 名）
     expect(r.groups.map((g) => [g.group, g.raw, g.penalty, g.final, g.rank, g.multiplier])).toEqual([
       ['第1組', 100 * W, 20 * W, 80 * W, 1, 3],
@@ -341,7 +392,7 @@ describe('封盤結算', () => {
     await invest(ctx, '戊', '第1組', 50 * W, 'thu');
     await invest(ctx, '戊', '第2組', 50 * W, 'thu');
     await phase(ctx, 'thu', 'close');
-    const r = (await getState(ctx)).courses.thu.results!;
+    const r = await adminResults(ctx, 'thu');
     expect(r.groups.every((g) => g.final === 100 * W && g.rank === 1 && g.multiplier === 3)).toBe(true);
     expect(r.rocket).toEqual(['第1組', '第2組', '第3組']);
     expect(r.investors.every((i) => i.payout === 300 * W && i.rank === 1)).toBe(true);
@@ -453,6 +504,83 @@ describe('暗盤', () => {
   });
 });
 
+describe('取消封盤', () => {
+  it('開盤中誤按封盤 → 取消後回到開盤中，投資保留、可繼續投，再封盤重新結算', async () => {
+    const ctx = await start();
+    await phase(ctx, 'wed', 'open');
+    await invest(ctx, '甲', '第2組', 30 * W);
+    await phase(ctx, 'wed', 'close');
+    expect((await getState(ctx)).courses.wed.results).not.toBeNull();
+    expect((await invest(ctx, '甲', '第2組', 40 * W)).body.error).toBe('closed');
+
+    const reopened = await phase(ctx, 'wed', 'reopen');
+    expect(reopened.status).toBe(200);
+    const s = await getState(ctx);
+    expect(s.courses.wed.phase).toBe('open');
+    expect(s.courses.wed.results).toBeNull();
+    expect(s.courses.wed.closedAt).toBeNull();
+    expect(s.courses.wed.groups.find((g) => g.id === '第2組')?.total).toBe(30 * W);
+    expect((await getMe(ctx, '甲')).courses.wed).toMatchObject({ alloc: { 第2組: 30 * W }, result: null, deducted: null });
+    // 封盤那一刻的走勢點也撤回
+    const hist = (await getJson<Record<string, HistoryPoint[]>>(ctx, '/api/history')).wed;
+    expect(hist.some((p) => p.mark === 'close')).toBe(false);
+
+    expect((await invest(ctx, '甲', '第2組', 50 * W)).status).toBe(200);
+    await phase(ctx, 'wed', 'close');
+    expect((await adminResults(ctx, 'wed')).groups.find((g) => g.group === '第2組')?.raw).toBe(50 * W);
+  });
+
+  it('暗盤中誤按立即封盤 → 取消後回到暗盤、接續剩餘倒數，金額重新隱藏，時間到照樣自動封盤', async () => {
+    const ctx = await start({ darkMs: 1500 });
+    await phase(ctx, 'wed', 'open');
+    await invest(ctx, '甲', '第2組', 30 * W);
+    await phase(ctx, 'wed', 'dark');
+    await invest(ctx, '乙', '第3組', 20 * W);
+    await new Promise((r) => setTimeout(r, 200));
+    await phase(ctx, 'wed', 'close');
+    expect((await getState(ctx)).courses.wed.groups.every((g) => g.total !== null)).toBe(true);
+
+    const ov = await (await fetch(ctx.base + '/api/admin/overview', { headers: adminHeader })).json();
+    expect(ov.courses.wed.reopenTo).toBe('dark');
+    expect(ov.courses.wed.reopenDarkLeftMs).toBeGreaterThan(1000);
+    expect(ov.courses.wed.reopenDarkLeftMs).toBeLessThanOrEqual(1300);
+
+    await phase(ctx, 'wed', 'reopen');
+    const s = await getState(ctx);
+    expect(s.courses.wed.phase).toBe('dark');
+    expect(s.courses.wed.groups.every((g) => g.total === null && g.rank === null)).toBe(true);
+    const left = s.courses.wed.darkEndsAt! - s.now;
+    expect(left).toBeGreaterThan(1000);
+    expect(left).toBeLessThanOrEqual(1300);
+    // 暗盤期間的走勢又重新隱藏
+    const hist = (await getJson<Record<string, HistoryPoint[]>>(ctx, '/api/history')).wed;
+    expect(hist.every((p) => p.totals['第3組'] === 0)).toBe(true);
+    // 暗盤中仍可調整
+    expect((await invest(ctx, '乙', '第3組', 10 * W)).status).toBe(200);
+
+    await new Promise((r) => setTimeout(r, left + 300));
+    const closed = await getState(ctx);
+    expect(closed.courses.wed.phase).toBe('closed');
+    expect(closed.courses.wed.results!.groups.find((g) => g.group === '第3組')?.raw).toBe(10 * W);
+  });
+
+  it('倒數結束自動封盤後取消 → 回到開盤中；只有已封盤才能取消', async () => {
+    const ctx = await start({ darkMs: 200 });
+    expect((await phase(ctx, 'wed', 'reopen')).status).toBe(409);
+    await phase(ctx, 'wed', 'open');
+    expect((await phase(ctx, 'wed', 'reopen')).status).toBe(409);
+    await phase(ctx, 'wed', 'dark');
+    await new Promise((r) => setTimeout(r, 400));
+    expect((await getState(ctx)).courses.wed.phase).toBe('closed');
+    await phase(ctx, 'wed', 'reopen');
+    const s = await getState(ctx);
+    expect(s.courses.wed.phase).toBe('open');
+    expect(s.courses.wed.darkEndsAt).toBeNull();
+    // 可以再進入暗盤
+    expect((await phase(ctx, 'wed', 'dark')).status).toBe(200);
+  });
+});
+
 describe('即時同步', () => {
   it('學生投資後，大螢幕（SSE）在 2 秒內收到新的各組金額', async () => {
     const ctx = await start();
@@ -483,8 +611,14 @@ describe('即時同步', () => {
 });
 
 describe('管理員', () => {
-  it('管理員 API 需要密碼', async () => {
+  it('管理員 API 需要密碼（中文密碼也可以，前後空白不影響）', async () => {
     const ctx = await start();
+    const check = (value: string) =>
+      fetch(ctx.base + '/api/admin/check', { method: 'POST', headers: { 'x-admin-password': encodeURIComponent(value) } }).then((r) => r.status);
+    expect(await check(ADMIN)).toBe(200);
+    expect(await check(` ${ADMIN} `)).toBe(200);
+    expect(await check('測試')).toBe(401);
+    expect((await fetch(ctx.base + '/api/admin/overview')).status).toBe(401);
     const res = await fetch(ctx.base + '/api/admin/phase', {
       method: 'POST',
       headers: { 'x-admin-password': 'wrong', 'content-type': 'application/json' },

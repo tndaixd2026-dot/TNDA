@@ -1,7 +1,7 @@
 // 學生端：輸入姓名登入，像買賣股票一樣把 100 萬分配給其他組。
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { BUDGET, MAX_PER_GROUP } from '../../shared/rules.ts';
-import { countdown, wan } from '../../shared/format.ts';
+import { countdown, parseWanInput, wan, yuanText } from '../../shared/format.ts';
 import { splitGroupLabel } from '../../shared/roster.ts';
 import {
   COURSE_IDS,
@@ -432,26 +432,24 @@ function CourseMarket(p: CourseMarketProps) {
 function AmountEditor(p: { initial: number; max: number; onSave: (amount: number) => void; onCancel: () => void }) {
   const [value, setValue] = useState(wan(p.initial));
   const [error, setError] = useState<string | null>(null);
+  const parsed = parseWanInput(value);
   function save(e: Event) {
     e.preventDefault();
-    const v = Number(value.replace('−', '-'));
-    if (!Number.isFinite(v) || v < 0) {
-      setError('請輸入 0 以上的數字');
+    if (parsed === null) {
+      setError('請輸入 0 以上的金額（單位：萬，小數點後最多 4 位，最小 1 元）');
       return;
     }
     setError(null);
-    p.onSave(Math.round(v * 10_000));
+    p.onSave(parsed);
   }
   return (
     <form class="amount-editor" onSubmit={save}>
       <div class="amount-editor-row">
         <input
           class="text-input"
-          type="number"
+          type="text"
           inputMode="decimal"
-          min={0}
-          max={50}
-          step="any"
+          autocomplete="off"
           value={value}
           onInput={(e) => setValue((e.target as HTMLInputElement).value)}
           aria-label="金額（萬）"
@@ -481,6 +479,7 @@ function AmountEditor(p: { initial: number; max: number; onSave: (amount: number
           最多 {wan(p.max)}
         </button>
       </div>
+      <p class="amount-preview muted">{parsed !== null ? `= ${yuanText(parsed)}` : '單位：萬（例如 12.3456 萬 = 123,456 元）'}</p>
       {error && <p class="form-error">{error}</p>}
     </form>
   );
@@ -488,21 +487,28 @@ function AmountEditor(p: { initial: number; max: number; onSave: (amount: number
 
 function MyResult({ pc, mine, name }: { pc: PublicCourse; mine: MyCourse; name: string }) {
   const results = pc.results;
-  if (!results || !mine.result) return null;
+  if (!results) return null;
   const idx = groupIndexMap(pc);
-  const isGod = results.stockGods.includes(name);
+  const isGod = results.stockGods.some((g) => g.name === name);
   const lines = results.groups.filter((g) => (mine.alloc[g.group] ?? 0) > 0);
   return (
     <>
       <Card class="result-card">
         <div class="result-label">你的報酬</div>
-        <div class="result-value">
-          {wan(mine.result.payout)}
-          <small> 萬</small>
-        </div>
-        <div class="result-rank">
-          第 {mine.result.rank} 名 / {mine.result.of} 人{isGod && <span class="award-tag">🏆 股神獎</span>}
-        </div>
+        {mine.result ? (
+          <>
+            <div class="result-value">
+              {wan(mine.result.payout)}
+              <small> 萬</small>
+            </div>
+            <div class="result-rank">
+              第 {mine.result.rank} 名 / {mine.result.of} 位有投資的同學
+              {isGod && <span class="award-tag">🏆 股神獎</span>}
+            </div>
+          </>
+        ) : (
+          <p class="muted">你這一場沒有投資，不列入個人排名。</p>
+        )}
         {lines.length > 0 && (
           <table class="mini-table">
             <thead>
@@ -527,9 +533,9 @@ function MyResult({ pc, mine, name }: { pc: PublicCourse; mine: MyCourse; name: 
             </tbody>
           </table>
         )}
-        {mine.remaining > 0 && (
+        {(mine.deducted ?? 0) > 0 && (
           <p class="muted">
-            你有 {wan(mine.remaining)} 萬沒投完，已從{splitGroupLabel(mine.group).short}倒扣，也不計入報酬。
+            你有 {wan(mine.deducted ?? 0)} 萬沒投完，已從{splitGroupLabel(mine.group).short}倒扣，也不計入報酬。
           </p>
         )}
       </Card>

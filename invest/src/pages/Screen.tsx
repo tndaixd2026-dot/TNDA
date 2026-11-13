@@ -177,8 +177,7 @@ function ResultsView({ pc, points, now }: { pc: PublicCourse; points: HistoryPoi
   if (!results) return <main class="screen-loading">結算中…</main>;
   const ids = pc.groups.map((g) => g.id);
   const rocket = results.groups.filter((g) => results.rocket.includes(g.group));
-  const gods = results.investors.filter((i) => results.stockGods.includes(i.name));
-  const top = results.investors.slice(0, 5);
+  const gods = results.stockGods;
   return (
     <main class="screen-results">
       <section class="awards">
@@ -204,19 +203,9 @@ function ResultsView({ pc, points, now }: { pc: PublicCourse; points: HistoryPoi
               </div>
             ))}
             {gods.length > 6 && <div class="award-sub">…等 {gods.length} 人並列</div>}
+            {gods.length === 0 && <div class="award-sub">這一場沒有人投資</div>}
           </div>
-          <ol class="top-investors">
-            {top
-              .filter((i) => !results.stockGods.includes(i.name))
-              .slice(0, 4)
-              .map((i) => (
-                <li key={i.name}>
-                  <span class="ti-rank">{i.rank}</span>
-                  <span class="ti-name">{i.name}</span>
-                  <span class="ti-amount">{wan(i.payout)} 萬</span>
-                </li>
-              ))}
-          </ol>
+          <div class="award-note">個人報酬排名：{results.investorCount} 位有投資的同學</div>
         </div>
       </section>
       <section class="final-table-panel">
@@ -239,19 +228,14 @@ function ResultsView({ pc, points, now }: { pc: PublicCourse; points: HistoryPoi
                   <GroupName id={g.group} index={idx.get(g.group) ?? 0} />
                 </td>
                 <td class="num">{wan(g.raw)}</td>
-                <td class="num">
-                  {g.penalty > 0 ? `−${wan(g.penalty)}` : '0'}
-                  {g.deductions.length > 0 && (
-                    <div class="ft-deductions">{g.deductions.map((d) => `${d.name} ${wan(d.unspent)}`).join('、')}</div>
-                  )}
-                </td>
+                <td class="num">{g.penalty > 0 ? `−${wan(g.penalty)}` : '0'}</td>
                 <td class="num ft-final">{wan(g.final)}</td>
                 <td class="num">×{g.multiplier}</td>
               </tr>
             ))}
           </tbody>
         </table>
-        <div class="ft-note">單位：萬　倒扣 = 組員封盤時沒投完的錢</div>
+        <div class="ft-note">單位：萬　倒扣 = 有登入的組員封盤時沒投完的錢（沒登入過的不倒扣）</div>
       </section>
       <section class="final-chart-panel">
         <Chart

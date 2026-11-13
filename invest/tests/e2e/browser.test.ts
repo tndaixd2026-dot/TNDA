@@ -10,7 +10,8 @@ import { chromium, type Browser, type Page } from 'playwright-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const ADMIN = 'e2e-secret';
+// 中文管理員密碼（從管理員頁的輸入框打進去）
+const ADMIN = '測試老師';
 const DARK_SECONDS = 4;
 
 let server: ChildProcess;
@@ -33,7 +34,7 @@ async function freePort(): Promise<number> {
 async function admin(path: string, body: unknown) {
   const res = await fetch(base + path, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-admin-password': ADMIN },
+    headers: { 'content-type': 'application/json', 'x-admin-password': encodeURIComponent(ADMIN) },
     body: JSON.stringify(body),
   });
   expect(res.status).toBe(200);
@@ -207,7 +208,26 @@ describe('瀏覽器實測：學生下單 → 大螢幕', () => {
     await screen.getByText('🏆 股神獎').waitFor({ timeout: (DARK_SECONDS + 3) * 1000 });
     await screen.getByText('🚀 一飛沖天獎').waitFor();
     await phone.getByText('你的報酬').waitFor({ timeout: 3000 });
-    await expect(phone.locator('.result-rank').innerText()).resolves.toMatch(/第 \d+ 名/);
+    await expect(phone.locator('.result-rank').innerText()).resolves.toMatch(/第 1 名 \/ 1 位有投資的同學/);
+    // 王小明沒投完 45 萬（有登入）→ 從第1組倒扣；排行榜只列各組金額，不列學生姓名
+    await phone.getByText('你有 45 萬沒投完').waitFor();
+    const table = await screen.locator('.final-table').innerText();
+    expect(table).toContain('−45');
+    expect(table).not.toContain('王小明');
+
+    // 管理員按「取消封盤」：倒數已結束，所以回到開盤中；大螢幕回到走勢與排行，學生又能下單
+    const adminPage = await openScreen();
+    adminPage.on('dialog', (d) => void d.accept());
+    await adminPage.goto(base + '/admin');
+    await adminPage.getByPlaceholder('管理員密碼').fill(ADMIN);
+    await adminPage.getByRole('button', { name: '登入' }).click();
+    await adminPage.getByRole('button', { name: /取消封盤（回到開盤中）/ }).click();
+    await screen.getByText('目前排行').waitFor({ timeout: 2000 });
+    await expect(boardTotal(screen, '第2組')).resolves.toBe('50萬');
+    await phone.locator('.btn-plus').first().waitFor({ timeout: 2000 });
+    await expect(phone.locator('.btn-plus').first().isEnabled()).resolves.toBe(true);
+    await expect(phone.getByText('你的報酬').count()).resolves.toBe(0);
+    await adminPage.context().close();
     await screen.context().close();
     await phone.context().close();
   });

@@ -5,8 +5,10 @@ import {
   competitionRanks,
   computeResults,
   multiplierForRank,
+  toPublicResults,
   type InvestCheck,
 } from '../shared/rules.ts';
+import { parseWanInput, wan } from '../shared/format.ts';
 
 const W = 10_000;
 
@@ -97,7 +99,9 @@ describe('computeResults', () => {
     const payout = Object.fromEntries(r.investors.map((i) => [i.name, i.payout]));
     expect(payout.a1).toBe(50 * W * 2 + 50 * W * 1);
     expect(payout.b1).toBe(50 * W * 3 + 30 * W * 1); // 沒花完的 20 萬不計入
-    expect(payout.c1).toBe(0);
+    // 個人名次只算有投資的人：c1 沒投資，不在排名裡
+    expect(payout.c1).toBeUndefined();
+    expect(r.investors).toHaveLength(3);
     expect(payout.d1).toBe(50 * W * 3 + 50 * W * 2);
     expect(r.stockGods).toEqual(['d1']);
   });
@@ -194,10 +198,69 @@ describe('computeResults', () => {
     expect(r.stockGods).toEqual(['p', 'q']);
   });
 
-  it('所有人報酬都相同（例如都是 0）時依規格全部並列股神；一飛沖天同分也全部並列', () => {
-    const r = computeResults(['A', 'B'], [{ name: 'x', group: 'A' }, { name: 'y', group: 'B' }], {});
-    expect(r.stockGods).toEqual(['x', 'y']);
+  it('缺席、沒登入的人不倒扣；有登入但沒投完的人照樣倒扣；有投資的人一定算有登入', () => {
+    const members = [
+      { name: 'present', group: 'A' }, // 有登入、沒投 → 倒扣 100 萬
+      { name: 'absent', group: 'A' }, // 沒登入 → 不倒扣
+      { name: 'partial', group: 'B' }, // 有投 30 萬（即使出席紀錄沒有，也算有登入）→ 倒扣 70 萬
+    ];
+    const allocs = { partial: { A: 30 * W } };
+    const loggedIn = new Set(['present']);
+    const r = computeResults(['A', 'B'], members, allocs, (name) => loggedIn.has(name));
+    const byGroup = Object.fromEntries(r.groups.map((g) => [g.group, g]));
+    expect(byGroup.A).toMatchObject({ raw: 30 * W, penalty: 100 * W, final: -70 * W });
+    expect(byGroup.A.deductions).toEqual([{ name: 'present', unspent: 100 * W }]);
+    expect(byGroup.B).toMatchObject({ raw: 0, penalty: 70 * W, final: -70 * W });
+    // 兩組同為 −70 萬 → 並列第 1，負數也照樣拿一飛沖天
     expect(r.rocket).toEqual(['A', 'B']);
+    expect(byGroup.A.multiplier).toBe(3);
+  });
+
+  it('個人名次的分母只算有投資的人；沒人投資時股神從缺，一飛沖天仍全部並列', () => {
+    const members = [
+      { name: 'x', group: 'A' },
+      { name: 'y', group: 'B' },
+      { name: 'z', group: 'B' },
+    ];
+    // 只有 x 登入並投了 1 元給 B；y、z 沒登入不倒扣 → B = 1 元第 1 名 ×3，A = −999,999 元
+    const r = computeResults(['A', 'B'], members, { x: { B: 1 } }, (n) => n === 'x');
+    expect(r.groups.map((g) => [g.group, g.final, g.rank])).toEqual([
+      ['B', 1, 1],
+      ['A', -(BUDGET - 1), 2],
+    ]);
+    expect(r.investors.map((i) => [i.name, i.payout, i.rank])).toEqual([['x', 3, 1]]);
+    expect(r.stockGods).toEqual(['x']);
+
+    const none = computeResults(['A', 'B'], members, {}, () => false);
+    expect(none.investors).toEqual([]);
+    expect(none.stockGods).toEqual([]);
+    expect(none.rocket).toEqual(['A', 'B']);
+    expect(none.groups.every((g) => g.penalty === 0)).toBe(true);
+  });
+
+  it('公開結果只有各組金額，不含學生姓名', () => {
+    const r = computeResults(
+      ['A', 'B', 'C'],
+      [
+        { name: '王小明', group: 'A' },
+        { name: '李小華', group: 'B' },
+      ],
+      { 王小明: { B: 50 * W, C: 50 * W }, 李小華: { A: 20 * W } },
+    );
+    const pub = toPublicResults(r);
+    expect(Object.keys(pub.groups[0]).sort()).toEqual(['final', 'group', 'multiplier', 'penalty', 'rank', 'raw']);
+    const json = JSON.stringify(pub.groups);
+    expect(json).not.toContain('李小華');
+    expect(json).not.toContain('王小明');
+    expect(pub.stockGods).toEqual([{ name: '王小明', group: 'A', payout: r.investors[0].payout }]);
+    expect(pub.investorCount).toBe(2);
+  });
+
+  it('金額可以到 1 元，×1.5 的報酬可以有 0.5 元', () => {
+    const r = computeResults(['A', 'B', 'C', 'D'], [{ name: 'm', group: 'D' }], { m: { A: 3, B: 2, C: 1 } });
+    // A=3 第 1 ×3、B=2 第 2 ×2、C=1 第 3 ×1.5 → 9 + 4 + 1.5
+    expect(r.investors[0].payout).toBe(14.5);
+    expect(r.groups.find((g) => g.group === 'D')).toMatchObject({ penalty: BUDGET - 6, final: -(BUDGET - 6) });
   });
 
   it('忽略投給自己組或不存在組的髒資料', () => {
@@ -206,5 +269,29 @@ describe('computeResults', () => {
     expect(a.raw).toBe(0);
     expect(a.penalty).toBe(50 * W);
     expect(r.investors[0].payout).toBe(50 * W * 3);
+  });
+});
+
+describe('金額格式（最小單位 1 元）', () => {
+  it('以萬顯示且精確到 1 元', () => {
+    expect(wan(350_000)).toBe('35');
+    expect(wan(525_000)).toBe('52.5');
+    expect(wan(123_456)).toBe('12.3456');
+    expect(wan(1)).toBe('0.0001');
+    expect(wan(14.5)).toBe('0.00145');
+    expect(wan(-120_000)).toBe('−12');
+    expect(wan(0)).toBe('0');
+  });
+
+  it('解析學生輸入的萬元金額', () => {
+    expect(parseWanInput('12.3456')).toBe(123_456);
+    expect(parseWanInput('0.0001')).toBe(1);
+    expect(parseWanInput(' 50 ')).toBe(500_000);
+    expect(parseWanInput('５')).toBe(50_000);
+    expect(parseWanInput('1.')).toBe(10_000);
+    expect(parseWanInput('0.00001')).toBeNull();
+    expect(parseWanInput('-1')).toBeNull();
+    expect(parseWanInput('abc')).toBeNull();
+    expect(parseWanInput('')).toBeNull();
   });
 });

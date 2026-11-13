@@ -2,12 +2,32 @@
 
 const WAN = 10_000;
 
-/** 以「萬」為單位的數字字串（不含單位）：350000 → "35"、525000 → "52.5"、-120000 → "-12"。 */
+/**
+ * 以「萬」為單位的精確數字字串（不含單位），最小單位到 1 元：
+ * 350000 → "35"、525000 → "52.5"、123456 → "12.3456"、-120000 → "−12"。
+ * 個人報酬可能有 0.5 元（×1.5），也會精確顯示。
+ */
 export function wan(amount: number): string {
-  const w = amount / WAN;
-  const rounded = Math.round(w * 100) / 100;
-  const text = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2).replace(/0+$/, '');
-  return text.replace('-', '−');
+  const abs = Math.abs(amount);
+  const whole = Math.floor(abs / WAN);
+  const rest = abs - whole * WAN;
+  let text = String(whole);
+  if (rest > 0) text += '.' + (rest / WAN).toFixed(5).slice(2).replace(/0+$/, '');
+  return amount < 0 ? `−${text}` : text;
+}
+
+/** 學生輸入的「萬」金額 → 整數元。小數最多 4 位（= 1 元）；格式不對回傳 null。 */
+export function parseWanInput(input: string): number | null {
+  const s = input.normalize('NFKC').trim().replace(/,/g, '');
+  const m = /^(\d+)(?:\.(\d{0,4}))?$/.exec(s);
+  if (!m) return null;
+  const frac = (m[2] ?? '').padEnd(4, '0');
+  return Number(m[1]) * WAN + Number(frac);
+}
+
+/** 「123,456 元」 */
+export function yuanText(amount: number): string {
+  return `${amount.toLocaleString('zh-TW')} 元`;
 }
 
 /** 帶單位：「35 萬」 */
