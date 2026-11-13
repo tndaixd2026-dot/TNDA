@@ -154,9 +154,15 @@ npm run test:e2e   # 建置本機版後用 npm start 啟動，再用 Chromium �
 8. **名單**：Notion「學生名單｜互動兩堂課」，週三＝115-1 VSAI（用「W9 分組」，5 組），週四＝115-1 跨域數位製作實務（用「115-1 跨域分組」，7 組）；期中棄選的同學排除；組名照 Notion 原文顯示。
 9. **管理員密碼**用 `invest.set_admin_password(…)`（Supabase）或 `ADMIN_PASSWORD`（本機版）設定，可以是中文。密碼不寫進程式碼與 git。
 
+## 目前狀態（2026-11-13）
+
+- Supabase 專案 **tnda-invest**（組織 tnda-invest、免費方案、Tokyo），已執行 `schema.sql`、設定管理員密碼，`deploy.config.json` 已填入網址與 publishable key。
+- 已匯入 Notion 正式名單：週三 19 人 5 組、週四 32 人 7 組（13 人兩堂都修）。
+- 已對正式 Supabase 實測：規則、暗盤保密、自動封盤、取消封盤、缺席不倒扣都正確；50 個用戶端同時查詢 20 秒（約每秒 24 次查詢、同時下單）零失敗；學生下單到大螢幕看到新金額 0.3～0.9 秒。
+
 ## 待確認
 
-- **Supabase 專案**：建立後依「上線步驟」設定（或提供存取權杖由 Claude 代為設定與實測）。
+- 合併 PR 後網頁才會發布到 GitHub Pages；建議 1 月第一週用真實手機彩排一次（彩排後記得「重置」）。
 
 ## 其他實作細節
 
