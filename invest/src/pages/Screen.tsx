@@ -6,7 +6,7 @@ import { splitGroupLabel } from '../../shared/roster.ts';
 import { courseLabel, type CourseId, type HistoryPoint, type PublicCourse } from '../../shared/types.ts';
 import { useLive, useNow } from '../api.ts';
 import { Chart } from '../ui/Chart.tsx';
-import { GroupName, PhaseBadge, QrCode, Swatch, groupIndexMap } from '../ui/common.tsx';
+import { Eyebrow, GroupName, Logo, PhaseBadge, QrCode, Swatch, groupIndexMap, pad2 } from '../ui/common.tsx';
 
 export function Screen() {
   useEffect(() => {
@@ -29,11 +29,14 @@ export function Screen() {
   const joinUrl = new URL('../', `${location.origin}${location.pathname}`).href;
 
   return (
-    <div class="screen">
+    <div class={`screen screen-phase-${pc.phase}`}>
       <header class="screen-header">
         <div class="screen-title">
-          <span class="screen-course">{courseLabel(course)}</span>
-          <span>期末提報・即時投資</span>
+          <Logo tone={pc.phase === 'pending' ? 'black' : 'white'} size={56} />
+          <span class="screen-title-text">
+            <span class="screen-kicker">Live Market · 期末提報即時投資</span>
+            <span class="screen-course">{courseLabel(course)}</span>
+          </span>
         </div>
         <PhaseBadge phase={pc.phase} remainingMs={pc.darkEndsAt ? pc.darkEndsAt - now : undefined} />
         <div class="screen-stats">
@@ -75,15 +78,25 @@ function PendingView({ pc, joinUrl, darkMs }: { pc: PublicCourse; joinUrl: strin
   return (
     <main class="screen-pending">
       <div class="pending-main">
-        <div class="pending-kicker">等待開盤</div>
-        <h1 class="pending-title">用 100 萬，投給你看好的組</h1>
-        <ul class="pending-rules">
-          <li>每人 100 萬虛擬資金，只能投別組</li>
-          <li>單一組最多 50 萬</li>
-          <li>沒投完的錢，封盤時從自己那組倒扣</li>
-          <li>最後 {dark}暗盤：金額與排名隱藏</li>
-          <li>封盤後第 1、2、3 名的組 ×3、×2、×1.5 計算你的報酬</li>
-        </ul>
+        <div class="pending-kicker">Standby · 等待開盤</div>
+        <h1 class="pending-title">
+          <span class="display">Live Market</span>
+          <span class="pending-title-zh">用 100 萬，投給你看好的組</span>
+        </h1>
+        <ol class="pending-rules">
+          {[
+            '每人 100 萬虛擬資金，只能投別組',
+            '單一組最多 50 萬',
+            '沒投完的錢，封盤時從自己那組倒扣',
+            `最後 ${dark}暗盤：金額與排名隱藏`,
+            '封盤後第 1、2、3 名的組 ×3、×2、×1.5 計算你的報酬',
+          ].map((t, i) => (
+            <li key={t}>
+              <span class="rule-num">{pad2(i + 1)}</span>
+              {t}
+            </li>
+          ))}
+        </ol>
         <div class="pending-groups">
           {pc.groups.map((g) => (
             <span class="group-chip" key={g.id}>
@@ -118,13 +131,15 @@ function LiveView({ pc, points, now, joinUrl }: { pc: PublicCourse; points: Hist
         <Chart groups={ids} points={points} now={now} live label="各組獲得金額的即時走勢" />
       </section>
       <aside class="screen-board">
-        <h2 class="board-title">目前排行</h2>
+        <h2 class="board-title">
+          <Eyebrow>Ranking · 目前排行</Eyebrow>
+        </h2>
         <ol class="board">
           {ranked.map((g) => {
             const delta = (g.total ?? 0) - (before[g.id] ?? 0);
             return (
               <li key={g.id} class="board-row">
-                <span class="board-rank">{g.rank}</span>
+                <span class="board-rank">{pad2(g.rank ?? 0)}</span>
                 <GroupName id={g.id} index={idx.get(g.id) ?? 0} stacked />
                 <span class="board-value">
                   <span class="board-total">
@@ -132,7 +147,7 @@ function LiveView({ pc, points, now, joinUrl }: { pc: PublicCourse; points: Hist
                     <small>萬</small>
                   </span>
                   <span class="board-delta">
-                    {delta === 0 ? '— 1 分鐘內' : `${delta > 0 ? '▲' : '▼'} ${wan(Math.abs(delta))} 萬 / 1 分鐘`}
+                    {delta === 0 ? '1 分鐘內 —' : `1 分鐘內 ${delta > 0 ? '↑' : '↓'} ${wan(Math.abs(delta))} 萬`}
                   </span>
                 </span>
               </li>
@@ -151,18 +166,18 @@ function DarkView({ pc, now, joinUrl }: { pc: PublicCourse; now: number; joinUrl
   return (
     <main class="screen-dark">
       <div class="dark-main">
-        <div class="dark-kicker">暗盤中 · 金額與排名已隱藏</div>
+        <div class="dark-kicker">
+          <span class="display">Dark</span> 暗盤中 · 金額與排名已隱藏
+        </div>
         <div class="dark-countdown" role="timer" aria-live="off">
           {countdown(left)}
         </div>
-        <div class="dark-hint">倒數結束自動封盤 · 還沒投完的同學快調整！</div>
+        <div class="dark-hint">倒數結束自動封盤 · 還沒投完的同學快調整</div>
         <div class="pending-groups">
           {pc.groups.map((g) => (
             <span class="group-chip" key={g.id}>
               <GroupName id={g.id} index={idx.get(g.id) ?? 0} />
-              <span class="lock" aria-label="已隱藏">
-                🔒
-              </span>
+              <span class="lock">隱藏</span>
             </span>
           ))}
         </div>
@@ -182,8 +197,11 @@ function ResultsView({ pc, points, now }: { pc: PublicCourse; points: HistoryPoi
   return (
     <main class="screen-results">
       <section class="awards">
-        <div class="award">
-          <div class="award-title">🚀 一飛沖天獎</div>
+        <div class="award award-rocket">
+          <div class="award-title">
+            <span class="display">Top Group</span>
+            <span class="award-title-zh">一飛沖天獎</span>
+          </div>
           <div class="award-winners">
             {rocket.map((g) => (
               <div key={g.group} class="award-winner">
@@ -193,8 +211,11 @@ function ResultsView({ pc, points, now }: { pc: PublicCourse; points: HistoryPoi
             ))}
           </div>
         </div>
-        <div class="award">
-          <div class="award-title">🏆 股神獎</div>
+        <div class="award award-god">
+          <div class="award-title">
+            <span class="display">Top Investor</span>
+            <span class="award-title-zh">股神獎</span>
+          </div>
           <div class="award-winners">
             {gods.slice(0, 6).map((i) => (
               <div key={i.name} class="award-winner">
@@ -224,7 +245,7 @@ function ResultsView({ pc, points, now }: { pc: PublicCourse; points: HistoryPoi
           <tbody>
             {results.groups.map((g) => (
               <tr key={g.group} class={results.rocket.includes(g.group) ? 'row-win' : ''}>
-                <td class="ft-rank">{g.rank}</td>
+                <td class="ft-rank">{pad2(g.rank)}</td>
                 <td>
                   <GroupName id={g.group} index={idx.get(g.group) ?? 0} />
                 </td>

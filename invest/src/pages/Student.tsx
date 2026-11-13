@@ -13,7 +13,7 @@ import {
   type PublicCourse,
 } from '../../shared/types.ts';
 import { rpc, storageGet, storageSet, useLive, useNow } from '../api.ts';
-import { Card, ConnectionDot, GroupName, PhaseBadge, groupIndexMap, useToast } from '../ui/common.tsx';
+import { Card, ConnectionDot, Eyebrow, GroupName, Logo, PhaseBadge, groupIndexMap, pad2, useToast } from '../ui/common.tsx';
 
 const NAME_KEY = 'invest.name';
 const STEP_KEY = 'invest.step';
@@ -68,13 +68,16 @@ function Login({ onLogin, notice }: { onLogin: (name: string) => void; notice: s
   }
 
   return (
-    <div class="student login-page">
-      <header class="brand">
-        <span class="brand-mark" aria-hidden="true">📈</span>
-        <div>
-          <div class="brand-title">期末提報 即時投資</div>
-          <div class="brand-sub">用 100 萬虛擬資金，投給你看好的組</div>
-        </div>
+    <div class="login-page">
+      <div class="login-inner">
+      <header class="login-head">
+        <Logo tone="white" size={48} />
+        <Eyebrow>Next D · 期末提報</Eyebrow>
+        <h1 class="login-title">
+          <span class="display">Live Market</span>
+          <span class="login-title-zh">即時投資</span>
+        </h1>
+        <p class="login-lead">用 100 萬虛擬資金，投給你看好的組。</p>
       </header>
       <form class="card login-card" onSubmit={submit}>
         <label for="name" class="field-label">
@@ -95,16 +98,24 @@ function Login({ onLogin, notice }: { onLogin: (name: string) => void; notice: s
             {error}
           </p>
         )}
-        <button class="btn btn-primary btn-block" type="submit" disabled={busy || !value.trim()}>
+        <button class="btn btn-solid btn-block btn-lg" type="submit" disabled={busy || !value.trim()}>
           {busy ? '登入中…' : '進入'}
         </button>
       </form>
-      <ul class="rules">
-        <li>每堂課各有 100 萬，只能投給同堂課的其他組</li>
-        <li>單一組最多 50 萬，所以至少要投兩組</li>
-        <li>封盤時沒投完的錢，會從你們組的總額倒扣</li>
-        <li>最後 5 分鐘是暗盤：看不到各組金額，但還能調整</li>
-      </ul>
+      <ol class="rules">
+        {[
+          '每堂課各有 100 萬，只能投給同堂課的其他組',
+          '單一組最多 50 萬，所以至少要投兩組',
+          '封盤時沒投完的錢，會從你們組的總額倒扣',
+          '最後 5 分鐘是暗盤：看不到各組金額，但還能調整',
+        ].map((t, i) => (
+          <li key={t}>
+            <span class="rule-num">{pad2(i + 1)}</span>
+            {t}
+          </li>
+        ))}
+      </ol>
+      </div>
     </div>
   );
 }
@@ -180,22 +191,25 @@ function Market({ name, onLogout }: { name: string; onLogout: (msg?: string) => 
     <div class="student">
       <header class="topbar">
         <div class="topbar-row">
-          <div>
-            <div class="topbar-title">期末提報 即時投資</div>
-            <div class="topbar-course">{courseLabel(course)}</div>
-          </div>
+          <Logo tone="white" size={34} />
           <PhaseBadge phase={pc.phase} remainingMs={pc.darkEndsAt ? pc.darkEndsAt - now : undefined} />
         </div>
-        <div class="topbar-row topbar-meta">
-          <span>
-            👤 {me.name}
-            <button class="link-btn" onClick={() => onLogout()}>
-              不是我
-            </button>
-          </span>
-          <ConnectionDot connected={connected} />
+        <div class="topbar-row topbar-sub">
+          <div>
+            <div class="topbar-title">Live Market · 即時投資</div>
+            <div class="topbar-course">{courseLabel(course)}</div>
+          </div>
         </div>
       </header>
+      <div class="identity">
+        <span>
+          <span class="identity-label">登入身分</span> {me.name}
+          <button class="link-btn" onClick={() => onLogout()}>
+            不是我
+          </button>
+        </span>
+        <ConnectionDot connected={connected} />
+      </div>
 
       {mine ? (
         <CourseMarket
@@ -295,7 +309,7 @@ function CourseMarket(p: CourseMarketProps) {
 
       <Card class="wallet">
         <div class="wallet-row">
-          <span class="wallet-label">可用餘額</span>
+          <span class="wallet-label">Wallet · 可用餘額</span>
           <span class="wallet-value">
             {wan(remaining)}
             <small> 萬</small>
@@ -324,10 +338,10 @@ function CourseMarket(p: CourseMarketProps) {
       )}
       {canTrade && remaining > 0 && (
         <div class="banner banner-warn">
-          ⚠️ 還有 <strong>{wan(remaining)} 萬</strong>沒投。封盤時沒投完的錢會從{own}倒扣！
+          還有 <strong>{wan(remaining)} 萬</strong>沒投。封盤時沒投完的錢會從{own}倒扣。
         </div>
       )}
-      {canTrade && remaining === 0 && <div class="banner banner-good">✔ 全部投完了，封盤前都還能調整。</div>}
+      {canTrade && remaining === 0 && <div class="banner banner-good">全部投完了，封盤前都還能調整。</div>}
 
       {canTrade && (
         <div class="stepper" role="group" aria-label="每按一次的金額">
@@ -353,7 +367,7 @@ function CourseMarket(p: CourseMarketProps) {
                 <GroupName id={g.id} index={i} />
                 <div class="stock-quote">
                   {pc.phase === 'pending' && <span class="quote-muted">—</span>}
-                  {pc.phase === 'dark' && <span class="quote-muted">🔒 隱藏</span>}
+                  {pc.phase === 'dark' && <span class="quote-muted">暗盤隱藏</span>}
                   {(pc.phase === 'open' || pc.phase === 'closed') && g.total !== null && (
                     <>
                       <span class="quote-total">
@@ -361,7 +375,8 @@ function CourseMarket(p: CourseMarketProps) {
                         <small>萬</small>
                       </span>
                       <span class="quote-rank">
-                        第 {g.rank} 名{result ? ` · ×${result.multiplier}` : ''}
+                        No.{pad2(g.rank ?? 0)}
+                        {result ? ` · ×${result.multiplier}` : ''}
                       </span>
                     </>
                   )}
@@ -490,7 +505,9 @@ function MyResult({ pc, mine, name }: { pc: PublicCourse; mine: MyCourse; name: 
   return (
     <>
       <Card class="result-card">
-        <div class="result-label">你的報酬</div>
+        <div class="result-label">
+          <Eyebrow>Payout · 你的報酬</Eyebrow>
+        </div>
         {mine.result ? (
           <>
             <div class="result-value">
@@ -499,7 +516,7 @@ function MyResult({ pc, mine, name }: { pc: PublicCourse; mine: MyCourse; name: 
             </div>
             <div class="result-rank">
               第 {mine.result.rank} 名 / {mine.result.of} 位有投資的同學
-              {isGod && <span class="award-tag">🏆 股神獎</span>}
+              {isGod && <span class="award-tag">股神獎</span>}
             </div>
           </>
         ) : (
@@ -536,17 +553,19 @@ function MyResult({ pc, mine, name }: { pc: PublicCourse; mine: MyCourse; name: 
         )}
       </Card>
       <Card>
-        <h2 class="card-title">各組最終排名</h2>
+        <h2 class="card-title">
+          <Eyebrow>Final Ranking · 各組最終排名</Eyebrow>
+        </h2>
         <ol class="final-list">
           {results.groups.map((g) => (
             <li key={g.group}>
-              <span class="final-rank">{g.rank}</span>
+              <span class="final-rank">{pad2(g.rank)}</span>
               <GroupName id={g.group} index={idx.get(g.group) ?? 0} />
               <span class="final-amount">
                 {wan(g.final)} 萬{g.penalty > 0 && <small class="muted">（倒扣 {wan(g.penalty)}）</small>}
               </span>
               <span class="final-mult">×{g.multiplier}</span>
-              {results.rocket.includes(g.group) && <span class="award-tag">🚀 一飛沖天</span>}
+              {results.rocket.includes(g.group) && <span class="award-tag">一飛沖天</span>}
             </li>
           ))}
         </ol>
