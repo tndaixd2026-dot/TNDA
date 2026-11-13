@@ -12,7 +12,7 @@ import {
   type MyCourse,
   type PublicCourse,
 } from '../../shared/types.ts';
-import { ApiError, api, storageGet, storageSet, useLive, useNow } from '../api.ts';
+import { rpc, storageGet, storageSet, useLive, useNow } from '../api.ts';
 import { Card, ConnectionDot, GroupName, PhaseBadge, groupIndexMap, useToast } from '../ui/common.tsx';
 
 const NAME_KEY = 'invest.name';
@@ -58,7 +58,7 @@ function Login({ onLogin, notice }: { onLogin: (name: string) => void; notice: s
     setBusy(true);
     setError(null);
     try {
-      const me = await api<MeState>('/api/login', { body: { name: value } });
+      const me = await rpc<MeState>('invest_me', { name: value });
       onLogin(me.name);
     } catch (err) {
       setError((err as Error).message);
@@ -110,7 +110,7 @@ function Login({ onLogin, notice }: { onLogin: (name: string) => void; notice: s
 }
 
 function Market({ name, onLogout }: { name: string; onLogout: (msg?: string) => void }) {
-  const { pub, me, setMe, offset, connected } = useLive({ name });
+  const { pub, me, meError, setMe, offset, connected } = useLive({ name });
   const now = useNow(offset, 250);
   const toast = useToast();
   const [step, setStepState] = useState(() => {
@@ -124,14 +124,10 @@ function Market({ name, onLogout }: { name: string; onLogout: (msg?: string) => 
   const failed = useRef(false);
   const lastGood = useRef<MeState | null>(null);
 
-  // 重新開啟頁面時也記錄一次登入，順便確認名字還在名單上
+  // 名單更新後找不到這個名字 → 回到登入頁
   useEffect(() => {
-    api<MeState>('/api/login', { body: { name } })
-      .then(setMe)
-      .catch((err: unknown) => {
-        if (err instanceof ApiError && err.status === 404) onLogout('名單已更新，找不到你的名字，請重新輸入');
-      });
-  }, [name]);
+    if (meError) onLogout('名單已更新，找不到你的名字，請重新輸入');
+  }, [meError]);
 
   function setStep(s: number) {
     setStepState(s);
@@ -156,7 +152,7 @@ function Market({ name, onLogout }: { name: string; onLogout: (msg?: string) => 
     inflight.current++;
     chain.current = chain.current.then(async () => {
       try {
-        lastGood.current = await api<MeState>('/api/invest', { body: { name, course, group, amount } });
+        lastGood.current = await rpc<MeState>('invest_invest', { name, course, grp: group, amount });
       } catch (err) {
         failed.current = true;
         toast.show((err as Error).message, 'error');
@@ -166,7 +162,7 @@ function Market({ name, onLogout }: { name: string; onLogout: (msg?: string) => 
           if (failed.current) {
             failed.current = false;
             try {
-              setMe(await api<MeState>(`/api/me?name=${encodeURIComponent(name)}`));
+              setMe(await rpc<MeState>('invest_me', { name }));
             } catch {
               // 推播會補上最新狀態
             }

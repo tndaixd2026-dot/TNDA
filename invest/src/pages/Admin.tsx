@@ -1,16 +1,18 @@
 // 管理員：切換場次、開盤／暗盤／封盤、看誰還沒投完、匯入名單、重置（彩排用）。
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { countdown, wan } from '../../shared/format.ts';
-import { COURSE_CSV_LABEL, rosterToCsv, splitGroupLabel } from '../../shared/roster.ts';
+import { COURSE_CSV_LABEL, parseRosterCsv, rosterToCsv, splitGroupLabel } from '../../shared/roster.ts';
 import {
   COURSE_IDS,
   courseLabel,
   type AdminOverview,
   type CourseId,
   type PublicCourse,
+  type Results,
   type RosterPreview,
 } from '../../shared/types.ts';
-import { ApiError, adminHeaders, api, storageGet, storageSet, useLive, useNow } from '../api.ts';
+import { resultsCsv } from '../../shared/csv.ts';
+import { ApiError, rpc, storageGet, storageSet, useLive, useNow } from '../api.ts';
 import { Card, ConnectionDot, PhaseBadge, useToast } from '../ui/common.tsx';
 
 const PW_KEY = 'invest.admin';
@@ -44,7 +46,7 @@ function AdminLogin({ onOk }: { onOk: (pw: string) => void }) {
   async function submit(e: Event) {
     e.preventDefault();
     try {
-      await api('/api/admin/check', { body: {}, admin: value });
+      await rpc('invest_admin_check', { pw: value });
       onOk(value);
     } catch (err) {
       setError((err as Error).message);
@@ -84,7 +86,7 @@ async function downloadBlob(blob: Blob, filename: string) {
 }
 
 function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
-  const live = useLive({});
+  const live = useLive({ intervalMs: 2000 });
   const now = useNow(live.offset, 250);
   const toast = useToast();
   const [ov, setOv] = useState<AdminOverview | null>(null);
@@ -93,9 +95,9 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
 
   async function refresh() {
     try {
-      setOv(await api<AdminOverview>('/api/admin/overview', { admin: pw }));
+      setOv(await rpc<AdminOverview>('invest_admin_overview', { pw }));
     } catch (err) {
-      if (err instanceof ApiError && err.status === 401) onLogout();
+      if (err instanceof ApiError && err.code === 'unauthorized') onLogout();
     }
   }
 
@@ -111,14 +113,14 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
     if (refreshTimer.current) clearTimeout(refreshTimer.current);
   }, []);
 
-  async function act(path: string, body: unknown, done?: string) {
+  async function act(fn: string, args: Record<string, unknown>, done?: string) {
     setBusy(true);
     try {
-      setOv(await api<AdminOverview>(path, { body, admin: pw }));
+      setOv(await rpc<AdminOverview>(fn, { pw, ...args }));
       if (done) toast.show(done);
     } catch (err) {
       toast.show((err as Error).message, 'error');
-      if (err instanceof ApiError && err.status === 401) onLogout();
+      if (err instanceof ApiError && err.code === 'unauthorized') onLogout();
     } finally {
       setBusy(false);
     }
@@ -142,7 +144,7 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
     if (c === course) return;
     const cur = pub.courses[course];
     if ((cur.phase === 'open' || cur.phase === 'dark') && !confirm(`${courseLabel(course)}還在進行中，切換後學生端與大螢幕都會改顯示${courseLabel(c)}。確定切換？`)) return;
-    void act('/api/admin/active', { course: c }, `已切換到${courseLabel(c)}`);
+    void act('invest_admin_set_active', { course: c }, `已切換到${courseLabel(c)}`);
   }
 
   const reopenTo = ov.courses[course].reopenTo;
@@ -158,7 +160,7 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
     }[action];
     if (!confirm(msg)) return;
     void act(
-      '/api/admin/phase',
+      'invest_admin_phase',
       { course, action },
       { open: '已開盤', dark: '已進入暗盤', close: '已封盤，結果已揭曉', reopen: `已取消封盤，回到${reopenLabel}` }[action],
     );
@@ -167,14 +169,14 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
   function reset() {
     const typed = prompt(`重置${courseLabel(course)}會清除這一場所有投資、走勢與結果（名單保留），回到未開盤。\n確定請輸入「重置」：`);
     if (typed !== '重置') return;
-    void act('/api/admin/reset', { course }, '已重置');
+    void act('invest_admin_reset', { course }, '已重置');
   }
 
   async function downloadResults() {
     try {
-      const res = await fetch(`/api/admin/results.csv?course=${course}`, { headers: adminHeaders(pw) });
-      if (!res.ok) throw new Error('下載失敗');
-      await downloadBlob(await res.blob(), `投資結果-${COURSE_CSV_LABEL[course]}.csv`);
+      const results = await rpc<Results>('invest_admin_results', { pw, course });
+      const blob = new Blob([resultsCsv(course, results)], { type: 'text/csv;charset=utf-8' });
+      await downloadBlob(blob, `投資結果-${COURSE_CSV_LABEL[course]}.csv`);
     } catch (err) {
       toast.show((err as Error).message, 'error');
     }
@@ -189,10 +191,10 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
       <header class="admin-header">
         <h1>管理員</h1>
         <nav class="admin-links">
-          <a href="/" target="_blank" rel="noreferrer">
+          <a href="../" target="_blank" rel="noreferrer">
             學生端 ↗
           </a>
-          <a href="/screen" target="_blank" rel="noreferrer">
+          <a href="../screen/" target="_blank" rel="noreferrer">
             大螢幕 ↗
           </a>
           <ConnectionDot connected={live.connected} />
@@ -345,10 +347,19 @@ function RosterCard({
     setPreview(null);
   }
 
+  /** CSV 在瀏覽器解析，再交給資料庫驗證（apply = true 才寫入） */
+  async function sendRoster(apply: boolean): Promise<RosterPreview> {
+    const parsed = parseRosterCsv(csv);
+    if (parsed.errors.length) {
+      return { ok: false, applied: false, errors: parsed.errors, entries: [], courses: [], summary: [], dropped: [] };
+    }
+    return rpc<RosterPreview>('invest_admin_roster', { pw, entries: parsed.entries, apply });
+  }
+
   async function doPreview() {
     setBusy(true);
     try {
-      setPreview(await api<RosterPreview>('/api/admin/roster/preview', { body: { csv }, admin: pw }));
+      setPreview(await sendRoster(false));
     } catch (err) {
       notify((err as Error).message, 'error');
     } finally {
@@ -362,7 +373,12 @@ function RosterCard({
     if (!confirm(`用這份 CSV 取代${label}的名單？`)) return;
     setBusy(true);
     try {
-      onApplied(await api<AdminOverview>('/api/admin/roster', { body: { csv }, admin: pw }));
+      const result = await sendRoster(true);
+      if (!result.applied) {
+        setPreview(result);
+        return;
+      }
+      onApplied(await rpc<AdminOverview>('invest_admin_overview', { pw }));
       notify('名單已匯入');
       setCsv('');
       setPreview(null);

@@ -1,6 +1,11 @@
-// 前端與伺服器溝通：JSON API + Server-Sent Events 即時同步（斷線自動重連）。
+// 前端與資料庫溝通：呼叫 Supabase（或本機版）的 RPC 函式，並用定時查詢保持同步。
+// 不用 WebSocket：現場網路不穩時，每次查詢都是獨立的請求，斷線後下一次查詢就自動補上最新狀態。
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { CourseId, HistoryPoint, MeState, PublicState } from '../shared/types.ts';
+
+/** 建置時決定：有設定就連 Supabase；空字串表示同一台主機（本機版） */
+const BASE = (import.meta.env.VITE_SUPABASE_URL ?? '').replace(/\/+$/, '');
+const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? '';
 
 export class ApiError extends Error {
   code: string;
@@ -12,40 +17,46 @@ export class ApiError extends Error {
   }
 }
 
-/** HTTP 標頭只能放 ASCII，中文密碼要先編碼 */
-export function adminHeaders(password: string): Record<string, string> {
-  return { 'x-admin-password': encodeURIComponent(password) };
-}
-
-export async function api<T>(
-  path: string,
-  opts: { method?: 'GET' | 'POST'; body?: unknown; admin?: string } = {},
-): Promise<T> {
+export async function rpc<T>(fn: string, args: Record<string, unknown> = {}): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(path, {
-      method: opts.method ?? (opts.body === undefined ? 'GET' : 'POST'),
+    res = await fetch(`${BASE}/rest/v1/rpc/${fn}`, {
+      method: 'POST',
       headers: {
-        ...(opts.body !== undefined ? { 'content-type': 'application/json' } : {}),
-        ...(opts.admin ? adminHeaders(opts.admin) : {}),
+        'content-type': 'application/json',
+        // 新版 publishable key（sb_publishable_…）只放 apikey；舊版 anon key 是 JWT，另外放 Authorization
+        ...(KEY ? { apikey: KEY } : {}),
+        ...(KEY.startsWith('eyJ') ? { authorization: `Bearer ${KEY}` } : {}),
       },
-      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+      body: JSON.stringify(args),
+      cache: 'no-store',
     });
   } catch {
     throw new ApiError(0, 'network', '連線失敗，請檢查網路後再試一次');
   }
-  const data = (await res.json().catch(() => null)) as (T & { error?: string; message?: string }) | null;
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
   if (!res.ok) {
-    throw new ApiError(res.status, data?.error ?? 'error', data?.message ?? `伺服器錯誤（${res.status}）`);
+    throw new ApiError(res.status, 'server', typeof data?.message === 'string' ? data.message : `伺服器錯誤（${res.status}）`);
+  }
+  if (data && typeof data === 'object' && typeof data.error === 'string' && typeof data.message === 'string') {
+    throw new ApiError(400, data.error, data.message);
   }
   return data as T;
 }
 
 export type HistoryMap = Record<CourseId, HistoryPoint[]>;
 
+interface Unchanged {
+  unchanged: true;
+  version: number;
+  now: number;
+}
+
 export interface Live {
   pub: PublicState | null;
   me: MeState | null;
+  /** 名字不在名單上（例如名單更新了） */
+  meError: ApiError | null;
   history: HistoryMap | null;
   /** 伺服器時間 − 本機時間 */
   offset: number;
@@ -53,103 +64,118 @@ export interface Live {
   setMe: (me: MeState) => void;
 }
 
-const STALE_MS = 35_000;
+/** 盤況有沒有「階段性」變化（換場、開盤、暗盤、封盤、取消封盤、重置） */
+function phaseKey(s: PublicState): string {
+  const c = (x: PublicState['courses']['wed']) => `${x.phase}:${x.darkEndsAt ?? ''}:${x.closedAt ?? ''}`;
+  return `${s.active}|${c(s.courses.wed)}|${c(s.courses.thu)}`;
+}
+
+function mergePoints(old: HistoryPoint[], fresh: HistoryPoint[]): HistoryPoint[] {
+  if (fresh.length === 0) return old;
+  const next = old.slice();
+  for (const p of fresh) {
+    const i = next.findIndex((q) => q.id === p.id);
+    if (i >= 0) next[i] = p;
+    else next.push(p);
+  }
+  return next;
+}
 
 /**
- * 訂閱伺服器推播。name 有值時會收到自己的投資資料；history 為 true 時會收到完整走勢（大螢幕用）。
+ * 定時查詢公開狀態。
+ * - name：學生端，另外取得自己的投資，並每 15 秒回報一次「我在線上」（出席紀錄）
+ * - history：大螢幕，另外取得走勢
+ * - intervalMs：查詢間隔（大螢幕 0.7 秒、學生與管理員 2 秒）
  */
-export function useLive(opts: { name?: string | null; history?: boolean }): Live {
+export function useLive(opts: { name?: string | null; history?: boolean; intervalMs?: number }): Live {
   const [pub, setPub] = useState<PublicState | null>(null);
   const [me, setMe] = useState<MeState | null>(null);
+  const [meError, setMeError] = useState<ApiError | null>(null);
   const [history, setHistory] = useState<HistoryMap | null>(null);
   const [offset, setOffset] = useState(0);
-  const [connected, setConnected] = useState(false);
-  const lastSeen = useRef(Date.now());
+  const [connected, setConnected] = useState(true);
+  const failures = useRef(0);
+  const interval = opts.intervalMs ?? 2000;
 
   useEffect(() => {
-    let es: EventSource | null = null;
-    let disposed = false;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let version: number | null = null;
+    let lastKey = '';
+    let hist: HistoryMap | null = null;
+    let polling = false;
 
-    const params = new URLSearchParams();
-    if (opts.name) params.set('name', opts.name);
-    if (opts.history) params.set('history', '1');
-    const url = `/api/events?${params.toString()}`;
-
-    const touch = () => {
-      lastSeen.current = Date.now();
+    const noteTime = (serverNow: number) => {
+      const next = serverNow - Date.now();
+      setOffset((prev) => (Math.abs(prev - next) > 500 ? next : prev));
     };
 
-    const connect = () => {
-      if (disposed) return;
-      es?.close();
-      es = new EventSource(url);
-      touch();
-      es.addEventListener('open', () => {
-        touch();
+    async function refreshMe() {
+      if (!opts.name) return;
+      try {
+        setMe(await rpc<MeState>('invest_me', { name: opts.name }));
+        setMeError(null);
+      } catch (err) {
+        if (err instanceof ApiError && err.code === 'not_in_roster') setMeError(err);
+      }
+    }
+
+    async function loadHistory(full: boolean) {
+      const lastId = (c: CourseId) => (full || !hist ? 0 : (hist[c][hist[c].length - 1]?.id ?? 0));
+      const fresh = await rpc<HistoryMap>('invest_history', { after_wed: lastId('wed'), after_thu: lastId('thu') });
+      hist = full || !hist ? fresh : { wed: mergePoints(hist.wed, fresh.wed), thu: mergePoints(hist.thu, fresh.thu) };
+      setHistory(hist);
+    }
+
+    async function poll() {
+      if (polling || stopped) return;
+      polling = true;
+      if (timer) clearTimeout(timer);
+      try {
+        const s = await rpc<PublicState | Unchanged>('invest_state', { since: version });
+        failures.current = 0;
         setConnected(true);
-      });
-      es.addEventListener('error', () => {
-        setConnected(false);
-        // 伺服器回錯誤時瀏覽器不會自動重連，這裡補上
-        if (es?.readyState === EventSource.CLOSED && !retryTimer) {
-          retryTimer = setTimeout(() => {
-            retryTimer = null;
-            connect();
-          }, 3000);
+        noteTime(s.now);
+        if (!('unchanged' in s)) {
+          const key = phaseKey(s);
+          const changed = key !== lastKey;
+          lastKey = key;
+          version = s.version;
+          setPub(s);
+          if (changed) void refreshMe();
+          if (opts.history) await loadHistory(changed || !hist);
         }
-      });
-      es.addEventListener('state', (e) => {
-        touch();
-        const s = JSON.parse((e as MessageEvent<string>).data) as PublicState;
-        const next = s.now - Date.now();
-        setOffset((prev) => (Math.abs(prev - next) > 500 ? next : prev));
-        setPub(s);
-      });
-      es.addEventListener('me', (e) => {
-        touch();
-        setMe(JSON.parse((e as MessageEvent<string>).data) as MeState);
-      });
-      es.addEventListener('history', (e) => {
-        touch();
-        setHistory(JSON.parse((e as MessageEvent<string>).data) as HistoryMap);
-      });
-      es.addEventListener('point', (e) => {
-        touch();
-        const { course, point } = JSON.parse((e as MessageEvent<string>).data) as { course: CourseId; point: HistoryPoint };
-        setHistory((h) => {
-          if (!h) return h;
-          const list = h[course].slice();
-          const last = list[list.length - 1];
-          if (last && last.t === point.t) list[list.length - 1] = point;
-          else list.push(point);
-          return { ...h, [course]: list };
-        });
-      });
-      es.addEventListener('ping', touch);
-    };
+      } catch {
+        failures.current++;
+        if (failures.current >= 2) setConnected(false);
+      } finally {
+        polling = false;
+        if (!stopped) timer = setTimeout(poll, document.visibilityState === 'hidden' ? 5000 : interval);
+      }
+    }
 
-    connect();
-
-    // 太久沒收到任何訊息（例如手機休眠、代理伺服器斷線）就重新連線
-    const watchdog = setInterval(() => {
-      if (Date.now() - lastSeen.current > STALE_MS) connect();
-    }, 5000);
+    void poll();
+    void refreshMe();
+    const heartbeat = opts.name ? setInterval(() => void refreshMe(), 15_000) : null;
     const onVisible = () => {
-      if (document.visibilityState === 'visible' && Date.now() - lastSeen.current > 5000) connect();
+      if (document.visibilityState === 'visible') {
+        void poll();
+        void refreshMe();
+      }
     };
     document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', onVisible);
 
     return () => {
-      disposed = true;
-      es?.close();
-      clearInterval(watchdog);
-      if (retryTimer) clearTimeout(retryTimer);
+      stopped = true;
+      if (timer) clearTimeout(timer);
+      if (heartbeat) clearInterval(heartbeat);
       document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', onVisible);
     };
-  }, [opts.name, opts.history]);
+  }, [opts.name, opts.history, interval]);
 
-  return { pub, me, history, offset, connected, setMe };
+  return { pub, me, meError, history, offset, connected, setMe };
 }
 
 /** 以伺服器時間為準、每 intervalMs 更新一次的「現在」。 */

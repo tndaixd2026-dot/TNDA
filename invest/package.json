@@ -2,7 +2,7 @@
   "name": "tnda-invest",
   "private": true,
   "version": "1.0.0",
-  "description": "期末提報「即時投資」互動系統：學生端、現場大螢幕、管理員後台。",
+  "description": "期末提報「即時投資」互動系統：學生端、現場大螢幕、管理員後台（Supabase + GitHub Pages；本機版備援）。",
   "type": "module",
   "engines": {
     "node": ">=22.18"
@@ -10,12 +10,14 @@
   "scripts": {
     "dev": "node scripts/dev.ts",
     "build": "vite build",
+    "build:local": "vite build --mode standalone",
     "start": "node server/main.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "vite build && vitest run --config vitest.e2e.config.ts"
+    "test:e2e": "vite build --mode standalone && vitest run --config vitest.e2e.config.ts"
   },
   "dependencies": {
+    "@electric-sql/pglite": "0.5.16",
     "preact": "10.29.8",
     "uqr": "0.1.3"
   },

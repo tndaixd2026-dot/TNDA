@@ -16,7 +16,7 @@ export function Screen() {
     return () => root.classList.remove('screen-mode');
   }, []);
 
-  const live = useLive({ history: true });
+  const live = useLive({ history: true, intervalMs: 700 });
   const now = useNow(live.offset, 250);
   const forced = new URLSearchParams(location.search).get('course');
 
@@ -25,7 +25,8 @@ export function Screen() {
   const course: CourseId = forced === 'wed' || forced === 'thu' ? forced : live.pub.active;
   const pc = live.pub.courses[course];
   const points = live.history?.[course] ?? [];
-  const joinUrl = `${location.origin}/`;
+  // 學生頁在大螢幕頁的上一層（/…/screen/ → /…/）
+  const joinUrl = new URL('../', `${location.origin}${location.pathname}`).href;
 
   return (
     <div class="screen">

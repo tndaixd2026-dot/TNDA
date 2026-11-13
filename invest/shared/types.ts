@@ -29,6 +29,8 @@ export interface RosterEntry {
 export type Allocation = Record<string, number>;
 
 export interface HistoryPoint {
+  /** 資料庫裡的流水號（增量更新用） */
+  id?: number;
   t: number;
   /** 組別 → 當下總額（元）。封盤點的值是含倒扣的最終金額。 */
   totals: Record<string, number>;
@@ -113,6 +115,8 @@ export interface PublicCourse {
 }
 
 export interface PublicState {
+  /** 每次公開狀態變動都會 +1 */
+  version: number;
   /** 伺服器時間，用來校正倒數 */
   now: number;
   active: CourseId;
@@ -165,6 +169,8 @@ export interface AdminOverview {
 
 export interface RosterPreview {
   ok: boolean;
+  /** 是否已經寫入（apply 且沒有錯誤） */
+  applied: boolean;
   errors: string[];
   entries: RosterEntry[];
   /** CSV 裡出現的課堂，匯入時只會取代這些課堂的名單 */

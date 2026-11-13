@@ -1,5 +1,6 @@
-// 瀏覽器端對端測試：用 `npm start` 啟動正式伺服器（需先 `npm run build`，`npm run test:e2e` 會自動建置），
-// 再用 Chromium 打開學生頁、大螢幕頁、管理員頁，驗證畫面與即時同步。
+// 瀏覽器端對端測試：用 `npm start` 啟動本機版伺服器（PGlite 跑和 Supabase 相同的 schema.sql；
+// `npm run test:e2e` 會先 `vite build --mode local`），再用 Chromium 打開學生頁、大螢幕頁、管理員頁，
+// 驗證畫面與同步（大螢幕每 1 秒、手機每 2 秒查詢一次）。
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -31,13 +32,15 @@ async function freePort(): Promise<number> {
   });
 }
 
-async function admin(path: string, body: unknown) {
-  const res = await fetch(base + path, {
+async function admin(fn: string, args: Record<string, unknown>) {
+  const res = await fetch(`${base}/rest/v1/rpc/${fn}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-admin-password': encodeURIComponent(ADMIN) },
-    body: JSON.stringify(body),
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pw: ADMIN, ...args }),
   });
   expect(res.status).toBe(200);
+  const data = (await res.json()) as { error?: string };
+  expect(data.error).toBeUndefined();
 }
 
 beforeAll(async () => {
@@ -113,8 +116,8 @@ function boardTotal(page: Page, group: string) {
 describe('npm start 啟動後三個頁面都能開', () => {
   it('伺服器啟動並印出三個頁面的網址', () => {
     expect(serverLog).toContain('已啟動');
-    expect(serverLog).toContain('/screen');
-    expect(serverLog).toContain('/admin');
+    expect(serverLog).toContain('/screen/');
+    expect(serverLog).toContain('/admin/');
   });
 
   it('學生頁：登入表單 → 輸入姓名後看到錢包與各組', async () => {
@@ -131,9 +134,11 @@ describe('npm start 啟動後三個頁面都能開', () => {
 
   it('大螢幕頁：未開盤畫面與 QR code', async () => {
     const page = await openScreen();
-    const res = await page.goto(base + '/screen');
+    const res = await page.goto(base + '/screen/');
     expect(res?.status()).toBe(200);
     await page.getByText('等待開盤').waitFor();
+    // QR code 指向學生頁
+    expect(await page.locator('.join-url').innerText()).toBe(base.replace(/^https?:\/\//, ''));
     await expect(page.locator('svg.qr').count()).resolves.toBe(1);
     await page.context().close();
   });
@@ -141,6 +146,8 @@ describe('npm start 啟動後三個頁面都能開', () => {
   it('管理員頁：密碼登入後看到盤況控制', async () => {
     const page = await openScreen();
     const res = await page.goto(base + '/admin');
+    // /admin 會導到 /admin/（和 GitHub Pages 一樣）
+    expect(page.url()).toBe(`${base}/admin/`);
     expect(res?.status()).toBe(200);
     await page.getByPlaceholder('管理員密碼').fill(ADMIN);
     await page.getByRole('button', { name: '登入' }).click();
@@ -152,9 +159,9 @@ describe('npm start 啟動後三個頁面都能開', () => {
 
 describe('瀏覽器實測：學生下單 → 大螢幕', () => {
   it('學生在手機頁按「＋」後，大螢幕畫面 2 秒內顯示新金額；暗盤隱藏金額；倒數結束自動封盤', async () => {
-    await admin('/api/admin/phase', { course: 'wed', action: 'open' });
+    await admin('invest_admin_phase', { course: 'wed', action: 'open' });
     const screen = await openScreen();
-    await screen.goto(base + '/screen');
+    await screen.goto(base + '/screen/');
     await screen.getByText('目前排行').waitFor();
 
     const phone = await openPhone();
@@ -193,11 +200,11 @@ describe('瀏覽器實測：學生下單 → 大螢幕', () => {
     await expect(row.locator('.hold-amount').innerText()).resolves.toContain('50');
 
     // 進入暗盤：大螢幕只剩倒數，沒有任何金額；學生端隱藏各組金額但看得到自己的
-    await admin('/api/admin/phase', { course: 'wed', action: 'dark' });
+    await admin('invest_admin_phase', { course: 'wed', action: 'dark' });
     await screen.getByText('暗盤中 · 金額與排名已隱藏').waitFor({ timeout: 2000 });
     await expect(screen.locator('.board-total').count()).resolves.toBe(0);
     expect(await screen.evaluate(() => document.body.innerText)).not.toContain('萬');
-    await phone.getByText('🔒 隱藏').first().waitFor({ timeout: 2000 });
+    await phone.getByText('🔒 隱藏').first().waitFor({ timeout: 4000 });
     await expect(phone.locator('.quote-total').count()).resolves.toBe(0);
     const third = phone.locator('.stock', { hasText: '第3組' });
     await third.getByRole('button', { name: /第3組 增加/ }).click();
@@ -207,7 +214,7 @@ describe('瀏覽器實測：學生下單 → 大螢幕', () => {
     // 倒數結束自動封盤，大螢幕揭曉結果，學生看到自己的報酬
     await screen.getByText('🏆 股神獎').waitFor({ timeout: (DARK_SECONDS + 3) * 1000 });
     await screen.getByText('🚀 一飛沖天獎').waitFor();
-    await phone.getByText('你的報酬').waitFor({ timeout: 3000 });
+    await phone.getByText('你的報酬').waitFor({ timeout: 4000 });
     await expect(phone.locator('.result-rank').innerText()).resolves.toMatch(/第 1 名 \/ 1 位有投資的同學/);
     // 王小明沒投完 45 萬（有登入）→ 從第1組倒扣；排行榜只列各組金額，不列學生姓名
     await phone.getByText('你有 45 萬沒投完').waitFor();
@@ -218,13 +225,13 @@ describe('瀏覽器實測：學生下單 → 大螢幕', () => {
     // 管理員按「取消封盤」：倒數已結束，所以回到開盤中；大螢幕回到走勢與排行，學生又能下單
     const adminPage = await openScreen();
     adminPage.on('dialog', (d) => void d.accept());
-    await adminPage.goto(base + '/admin');
+    await adminPage.goto(base + '/admin/');
     await adminPage.getByPlaceholder('管理員密碼').fill(ADMIN);
     await adminPage.getByRole('button', { name: '登入' }).click();
     await adminPage.getByRole('button', { name: /取消封盤（回到開盤中）/ }).click();
     await screen.getByText('目前排行').waitFor({ timeout: 2000 });
     await expect(boardTotal(screen, '第2組')).resolves.toBe('50萬');
-    await phone.locator('.btn-plus').first().waitFor({ timeout: 2000 });
+    await phone.locator('.btn-plus').first().waitFor({ timeout: 4000 });
     await expect(phone.locator('.btn-plus').first().isEnabled()).resolves.toBe(true);
     await expect(phone.getByText('你的報酬').count()).resolves.toBe(0);
     await adminPage.context().close();
