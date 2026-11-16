@@ -21,7 +21,8 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       outDir: 'dist',
-      target: 'es2022',
+      // 舊一點的手機也能跑：iOS Safari 14、Android Chrome 87（含 LINE 等 App 內建瀏覽器）
+      target: ['es2020', 'safari14', 'chrome87', 'firefox78', 'edge88'],
       sourcemap: false,
       rollupOptions: {
         input: {

@@ -160,6 +160,25 @@ npm run test:e2e   # 建置本機版後用 npm start 啟動，再用 Chromium �
 - 動畫：金額變化時數字滑動（大螢幕 0.35 秒，數字停下來一定是精確金額）、排行換名次時整列滑到新位置、走勢圖平滑往右延伸且新下單的線是「長上去」、縱軸刻度慢慢拉開、換階段時新畫面像視窗打開、暗盤最後 10 秒倒數變白放大、揭曉時獎項彈出、表格依序出現、走勢從左到右畫出來。
 - 系統設定「減少動態效果」時，所有動畫都關閉、數字直接跳到結果。
 
+## 跨裝置檢查（手機、平板、電腦）
+
+```bash
+npm run build:local
+DARK_SECONDS=600 ADMIN_PASSWORD=測試老師 PORT=8857 npm start      # 另開一個終端機
+node scripts/device-check.cjs http://127.0.0.1:8857 測試老師 ./device-report
+```
+
+用 Chromium 模擬 17 種螢幕（iPhone SE 320px～iPhone 15 Pro Max、iPhone 橫拿、Galaxy／Pixel、Galaxy Z Fold 外螢幕與展開、iPad mini／Pro、Galaxy Tab、筆電、桌機），走過學生會看到的每個畫面（進場動畫、登入、投資與輸入金額、超過上限的提示、暗盤、結算），自動檢查：整頁不能左右捲動、沒有元素超出畫面、文字沒有被切掉或溢出、按鈕至少 36px，並存下每個畫面的截圖。目前全部通過。
+
+為了真機相容另外做的事：
+
+- **iPhone Safari**：JS 編譯到 iOS Safari 14 也能跑；按鈕加 `touch-action: manipulation`，快速連按「＋」不會被當成雙擊放大；輸入框字級 ≥ 16px，點下去不會自動放大；橫拿時避開瀏海（safe area）；`inert`、`dvh` 在舊版不支援時有退路。
+- **Android**：宣告 `color-scheme: only light`，三星網際網路與 Chrome 的「自動深色模式」不會把頁面反轉；LINE 等 App 內建瀏覽器（Android Chrome 87 以上）可用。
+- **鍵盤打開時**：直接輸入金額超過上限或餘額不足的提示顯示在輸入框正下方，不會被鍵盤蓋住。
+- **矮螢幕（手機橫拿）**：頂部黑條不固定，留給內容更多空間。
+
+這是模擬尺寸與觸控，不是真的 Safari 引擎；1 月彩排時仍建議用幾支真的 iPhone 與 Android 實際操作一次。
+
 ## 已確認的規則細節
 
 規格沒寫明的地方，以下是和老師確認過的做法：
