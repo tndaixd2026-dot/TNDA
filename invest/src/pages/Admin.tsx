@@ -13,7 +13,7 @@ import {
 } from '../../shared/types.ts';
 import { resultsCsv } from '../../shared/csv.ts';
 import { ApiError, rpc, storageGet, storageSet, useLive, useNow } from '../api.ts';
-import { Card, ConnectionDot, PhaseBadge, useToast } from '../ui/common.tsx';
+import { Card, ConnectionDot, Eyebrow, Logo, PhaseBadge, useToast } from '../ui/common.tsx';
 
 const PW_KEY = 'invest.admin';
 
@@ -53,8 +53,12 @@ function AdminLogin({ onOk }: { onOk: (pw: string) => void }) {
     }
   }
   return (
-    <div class="admin">
+    <div class="admin admin-login">
+      <header class="admin-header">
+        <Logo tone="white" size={36} />
+      </header>
       <form class="card login-card" onSubmit={submit}>
+        <Eyebrow>Admin · 管理員</Eyebrow>
         <h1 class="card-title">管理員登入</h1>
         <input
           class="text-input"
@@ -189,13 +193,16 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
   return (
     <div class="admin">
       <header class="admin-header">
-        <h1>管理員</h1>
+        <div class="admin-brand">
+          <Logo tone="white" size={36} />
+          <h1>Admin · 管理員</h1>
+        </div>
         <nav class="admin-links">
           <a href="../" target="_blank" rel="noreferrer">
-            學生端 ↗
+            學生端 →
           </a>
           <a href="../screen/" target="_blank" rel="noreferrer">
-            大螢幕 ↗
+            大螢幕 →
           </a>
           <ConnectionDot connected={live.connected} />
           <button class="link-btn" onClick={onLogout}>
@@ -205,7 +212,9 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
       </header>
 
       <Card>
-        <h2 class="card-title">目前場次</h2>
+        <h2 class="card-title">
+          <Eyebrow>Session · 目前場次</Eyebrow>
+        </h2>
         <p class="muted">學生端與大螢幕會顯示這裡選的場次。</p>
         <div class="course-switch">
           {COURSE_IDS.map((c) => (
@@ -221,23 +230,24 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
       </Card>
 
       <Card class="control-card">
+        <Eyebrow>Market Control · 盤況控制</Eyebrow>
         <h2 class="card-title">盤況控制：{courseLabel(course)}</h2>
         <div class="control-status">
           <PhaseBadge phase={pc.phase} remainingMs={pc.darkEndsAt ? pc.darkEndsAt - now : undefined} />
           {pc.phase === 'dark' && pc.darkEndsAt && <span class="big-countdown">{countdown(pc.darkEndsAt - now)}</span>}
         </div>
         <div class="control-buttons">
-          <button class="btn btn-primary btn-lg" disabled={busy || pc.phase !== 'pending'} onClick={() => phase('open')}>
-            ▶ 開盤
+          <button class="btn btn-accent btn-lg" disabled={busy || pc.phase !== 'pending'} onClick={() => phase('open')}>
+            開盤
           </button>
-          <button class="btn btn-dark btn-lg" disabled={busy || pc.phase !== 'open'} onClick={() => phase('dark')}>
-            ◐ 進入暗盤（{darkLabel}後自動封盤）
+          <button class="btn btn-solid btn-lg" disabled={busy || pc.phase !== 'open'} onClick={() => phase('dark')}>
+            進入暗盤（{darkLabel}後自動封盤）
           </button>
           <button class="btn btn-danger btn-lg" disabled={busy || (pc.phase !== 'open' && pc.phase !== 'dark')} onClick={() => phase('close')}>
-            ■ 立即封盤
+            立即封盤
           </button>
-          <button class="btn btn-lg" disabled={busy || pc.phase !== 'closed'} onClick={() => phase('reopen')}>
-            ↺ 取消封盤{pc.phase === 'closed' ? `（回到${reopenLabel}）` : ''}
+          <button class="btn btn-outline btn-lg" disabled={busy || pc.phase !== 'closed'} onClick={() => phase('reopen')}>
+            取消封盤{pc.phase === 'closed' ? `（回到${reopenLabel}）` : ''}
           </button>
         </div>
         {pc.phase === 'closed' && (
@@ -251,7 +261,9 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
       </Card>
 
       <Card>
-        <h2 class="card-title">參與狀況</h2>
+        <h2 class="card-title">
+          <Eyebrow>Participation · 參與狀況</Eyebrow>
+        </h2>
         <div class="stat-row">
           <div class="stat">
             <div class="stat-label">名單</div>
@@ -284,7 +296,7 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
                     <td>{s.name}</td>
                     <td>{splitGroupLabel(s.group).short}</td>
                     <td class="num">{wan(s.remaining)} 萬</td>
-                    <td>{s.joined ? '✔ 會倒扣' : <span class="muted">未登入・不倒扣</span>}</td>
+                    <td>{s.joined ? '已登入・會倒扣' : <span class="muted">未登入・不倒扣</span>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -296,7 +308,9 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
       <RosterCard ov={ov} pw={pw} onApplied={(next) => setOv(next)} notify={toast.show} />
 
       <Card class="danger-card">
-        <h2 class="card-title">彩排工具</h2>
+        <h2 class="card-title">
+          <Eyebrow>Rehearsal · 彩排工具</Eyebrow>
+        </h2>
         <p class="muted">清除{courseLabel(course)}的所有投資、走勢與結果，回到「未開盤」。名單不受影響。</p>
         <button class="btn btn-danger" disabled={busy} onClick={reset}>
           重置{courseLabel(course)}資料
@@ -315,10 +329,10 @@ function ResultSummary({ pc }: { pc: PublicCourse }) {
   return (
     <div class="result-summary">
       <div>
-        🚀 一飛沖天獎：<strong>{rocket}</strong>
+        一飛沖天獎：<strong>{rocket}</strong>
       </div>
       <div>
-        🏆 股神獎：
+        股神獎：
         <strong>{gods.length ? gods.map((i) => `${i.name}（${wan(i.payout)} 萬）`).join('、') : '沒有人投資'}</strong>
       </div>
     </div>
@@ -395,7 +409,9 @@ function RosterCard({
 
   return (
     <Card>
-      <h2 class="card-title">名單</h2>
+      <h2 class="card-title">
+          <Eyebrow>Roster · 名單</Eyebrow>
+        </h2>
       <div class="roster-courses">
         {COURSE_IDS.map((c) => (
           <details key={c} class="roster-course">
@@ -462,7 +478,7 @@ function RosterCard({
             <ul class="warn-list">
               {preview.dropped.map((d, i) => (
                 <li key={i}>
-                  ⚠️ {d.name}（{COURSE_CSV_LABEL[d.course]}）：{d.reason}
+                  {d.name}（{COURSE_CSV_LABEL[d.course]}）：{d.reason}
                 </li>
               ))}
             </ul>

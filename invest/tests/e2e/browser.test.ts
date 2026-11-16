@@ -152,7 +152,7 @@ describe('npm start 啟動後三個頁面都能開', () => {
     await page.getByPlaceholder('管理員密碼').fill(ADMIN);
     await page.getByRole('button', { name: '登入' }).click();
     await page.getByText('盤況控制：上半場・週三').waitFor();
-    await expect(page.getByRole('button', { name: '▶ 開盤' }).isEnabled()).resolves.toBe(true);
+    await expect(page.getByRole('button', { name: '開盤', exact: true }).isEnabled()).resolves.toBe(true);
     await page.context().close();
   });
 });
@@ -204,7 +204,7 @@ describe('瀏覽器實測：學生下單 → 大螢幕', () => {
     await screen.getByText('暗盤中 · 金額與排名已隱藏').waitFor({ timeout: 2000 });
     await expect(screen.locator('.board-total').count()).resolves.toBe(0);
     expect(await screen.evaluate(() => document.body.innerText)).not.toContain('萬');
-    await phone.getByText('🔒 隱藏').first().waitFor({ timeout: 4000 });
+    await phone.getByText('暗盤隱藏').first().waitFor({ timeout: 4000 });
     await expect(phone.locator('.quote-total').count()).resolves.toBe(0);
     const third = phone.locator('.stock', { hasText: '第3組' });
     await third.getByRole('button', { name: /第3組 增加/ }).click();
@@ -212,8 +212,8 @@ describe('瀏覽器實測：學生下單 → 大螢幕', () => {
     await expect(phone.locator('.wallet-value').innerText()).resolves.toContain('45');
 
     // 倒數結束自動封盤，大螢幕揭曉結果，學生看到自己的報酬
-    await screen.getByText('🏆 股神獎').waitFor({ timeout: (DARK_SECONDS + 3) * 1000 });
-    await screen.getByText('🚀 一飛沖天獎').waitFor();
+    await screen.getByText('股神獎', { exact: true }).waitFor({ timeout: (DARK_SECONDS + 3) * 1000 });
+    await screen.getByText('一飛沖天獎', { exact: true }).waitFor();
     await phone.getByText('你的報酬').waitFor({ timeout: 4000 });
     await expect(phone.locator('.result-rank').innerText()).resolves.toMatch(/第 1 名 \/ 1 位有投資的同學/);
     // 王小明沒投完 45 萬（有登入）→ 從第1組倒扣；排行榜只列各組金額，不列學生姓名
