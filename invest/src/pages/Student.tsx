@@ -302,18 +302,13 @@ function CourseMarket(p: CourseMarketProps) {
     p.submit(p.course, group, cur + delta);
   }
 
-  function setExact(group: string, amount: number) {
+  /** 直接輸入金額：成功回傳 null，失敗回傳說明（顯示在輸入框下方，手機鍵盤打開時也看得到） */
+  function setExact(group: string, amount: number): string | null {
     const cur = alloc[group] ?? 0;
-    if (amount > MAX_PER_GROUP) {
-      p.notify('單一組最多只能投 50 萬', 'error');
-      return false;
-    }
-    if (amount - cur > remaining) {
-      p.notify(`餘額不足，這組最多可以投到 ${wan(Math.min(MAX_PER_GROUP, cur + remaining))} 萬`, 'error');
-      return false;
-    }
+    if (amount > MAX_PER_GROUP) return '單一組最多只能投 50 萬';
+    if (amount - cur > remaining) return `餘額不足，這組最多可以投到 ${wan(Math.min(MAX_PER_GROUP, cur + remaining))} 萬`;
     if (amount !== cur) p.submit(p.course, group, amount);
-    return true;
+    return null;
   }
 
   return (
@@ -446,7 +441,9 @@ function CourseMarket(p: CourseMarketProps) {
                   max={Math.min(MAX_PER_GROUP, cur + remaining)}
                   onCancel={() => p.setEditing(null)}
                   onSave={(amount) => {
-                    if (setExact(g.id, amount)) p.setEditing(null);
+                    const err = setExact(g.id, amount);
+                    if (!err) p.setEditing(null);
+                    return err;
                   }}
                 />
               )}
@@ -458,7 +455,7 @@ function CourseMarket(p: CourseMarketProps) {
   );
 }
 
-function AmountEditor(p: { initial: number; max: number; onSave: (amount: number) => void; onCancel: () => void }) {
+function AmountEditor(p: { initial: number; max: number; onSave: (amount: number) => string | null; onCancel: () => void }) {
   const [value, setValue] = useState(wan(p.initial));
   const [error, setError] = useState<string | null>(null);
   const parsed = parseWanInput(value);
@@ -468,8 +465,7 @@ function AmountEditor(p: { initial: number; max: number; onSave: (amount: number
       setError('請輸入 0 以上的金額（單位：萬，小數點後最多 4 位，最小 1 元）');
       return;
     }
-    setError(null);
-    p.onSave(parsed);
+    setError(p.onSave(parsed));
   }
   return (
     <form class="amount-editor" onSubmit={save}>
@@ -509,7 +505,11 @@ function AmountEditor(p: { initial: number; max: number; onSave: (amount: number
         </button>
       </div>
       <p class="amount-preview muted">{parsed !== null ? `= ${yuanText(parsed)}` : '單位：萬（例如 12.3456 萬 = 123,456 元）'}</p>
-      {error && <p class="form-error">{error}</p>}
+      {error && (
+        <p class="form-error" role="alert">
+          {error}
+        </p>
+      )}
     </form>
   );
 }
@@ -582,7 +582,7 @@ function MyResult({ pc, mine, name }: { pc: PublicCourse; mine: MyCourse; name: 
               <span class="final-rank">{pad2(g.rank)}</span>
               <GroupName id={g.group} index={idx.get(g.group) ?? 0} />
               <span class="final-amount">
-                {wan(g.final)} 萬{g.penalty > 0 && <small class="muted">（倒扣 {wan(g.penalty)}）</small>}
+                {wan(g.final)} 萬{g.penalty > 0 && <small class="muted">倒扣 {wan(g.penalty)}</small>}
               </span>
               <span class="final-mult">×{g.multiplier}</span>
               {results.rocket.includes(g.group) && <span class="award-tag">一飛沖天</span>}
