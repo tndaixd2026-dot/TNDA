@@ -1006,7 +1006,8 @@ begin
   end loop;
 
   if v_apply and coalesce(array_length(v_errors, 1), 0) = 0 then
-    delete from invest.attendance;
+    -- Supabase 的 safeupdate 不允許沒有 WHERE 的 DELETE
+    delete from invest.attendance a where a.course in ('wed', 'thu');
     insert into invest.attendance (course, name_key, week, status)
     select x ->> 'course', x ->> 'key', (x ->> 'week')::int, x ->> 'status' from jsonb_each(v_clean) as t(k, x);
   end if;
