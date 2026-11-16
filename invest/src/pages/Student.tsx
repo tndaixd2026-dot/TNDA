@@ -325,7 +325,7 @@ function CourseMarket(p: CourseMarketProps) {
         <div class="wallet-row">
           <span class="wallet-label">Wallet · 可用餘額</span>
           <span class="wallet-value">
-            <Wan value={remaining} ms={450} />
+            <Wan value={remaining} ms={450} step={10_000} />
             <small> 萬</small>
           </span>
         </div>

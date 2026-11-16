@@ -640,20 +640,26 @@ small {
   color: var(--tnda-black);
 }
 .wallet-row {
+  /* 標題一行、金額一行，兩行都不換行：金額變寬變窄時錢包高度不變，下面的內容不會跟著跳 */
   display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 12px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
 }
 .wallet-label {
   font-weight: 800;
   font-size: 11px;
+  line-height: 14px;
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
+  white-space: nowrap;
 }
 .wallet-value {
-  font-size: 2.6rem;
+  display: block;
+  height: 1em;
+  font-size: min(2.6rem, 10.5vw);
   line-height: 1;
+  white-space: nowrap;
   color: var(--tnda-white);
 }
 .wallet-value small {

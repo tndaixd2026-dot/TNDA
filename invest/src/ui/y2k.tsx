@@ -69,8 +69,9 @@ export function Ticker({ items, speed = 90, class: cls }: { items: ComponentChil
 }
 
 /** 金額（萬）：改變時平滑滑到新數字。 */
-export function Wan({ value, ms = 700, from }: { value: number; ms?: number; from?: number }) {
-  const shown = useTween(value, ms, 100, from);
+/** step：滑動途中取整的單位（元）。手機錢包用 1 萬，途中不會出現一長串小數把版面撐寬。 */
+export function Wan({ value, ms = 700, from, step = 100 }: { value: number; ms?: number; from?: number; step?: number }) {
+  const shown = useTween(value, ms, step, from);
   return <>{wan(shown)}</>;
 }
 
