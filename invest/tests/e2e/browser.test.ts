@@ -97,7 +97,8 @@ async function openScreen(): Promise<Page> {
 }
 
 async function loginStudent(page: Page, name: string) {
-  await page.goto(base + '/');
+  // ?intro=0：跳過進場動畫（進場動畫另外測）
+  await page.goto(base + '/?intro=0');
   await page.getByLabel('你的姓名').fill(name);
   await page.getByRole('button', { name: '進入' }).click();
   await page.getByText('可用餘額').waitFor();
@@ -122,7 +123,7 @@ describe('npm start 啟動後三個頁面都能開', () => {
 
   it('學生頁：登入表單 → 輸入姓名後看到錢包與各組', async () => {
     const page = await openPhone();
-    const res = await page.goto(base + '/');
+    const res = await page.goto(base + '/?intro=0');
     expect(res?.status()).toBe(200);
     await expect(page.getByLabel('你的姓名').isVisible()).resolves.toBe(true);
     await loginStudent(page, '王小明');
@@ -136,7 +137,7 @@ describe('npm start 啟動後三個頁面都能開', () => {
     const page = await openScreen();
     const res = await page.goto(base + '/screen/');
     expect(res?.status()).toBe(200);
-    await page.getByText('等待開盤').waitFor();
+    await page.locator('.pending-kicker', { hasText: '等待開盤' }).waitFor();
     // QR code 指向學生頁
     expect(await page.locator('.join-url').innerText()).toBe(base.replace(/^https?:\/\//, ''));
     await expect(page.locator('svg.qr').count()).resolves.toBe(1);
@@ -154,6 +155,54 @@ describe('npm start 啟動後三個頁面都能開', () => {
     await page.getByText('盤況控制：上半場・週三').waitFor();
     await expect(page.getByRole('button', { name: '開盤', exact: true }).isEnabled()).resolves.toBe(true);
     await page.context().close();
+  });
+});
+
+describe('學生登入頁的進場動畫', () => {
+  it('第一次開啟會播進場動畫（沒有照片時播文字短版），播完自動進入登入表單；同一個分頁不再播', async () => {
+    const page = await openPhone();
+    // 不受本機 public/intro/ 裡有沒有照片影響：這裡模擬「還沒放照片」
+    await page.route('**/intro/manifest.json', (r) => r.fulfill({ status: 404, body: '' }));
+    await page.goto(base + '/');
+    await page.locator('.intro').waitFor();
+    // 播放中登入表單不能操作
+    await expect(page.locator('.login-inner').getAttribute('inert')).resolves.not.toBeNull();
+    await page.locator('.intro').waitFor({ state: 'detached', timeout: 8000 });
+    await expect(page.locator('.login-inner').getAttribute('inert')).resolves.toBeNull();
+    await page.getByLabel('你的姓名').fill('王小明');
+    await page.reload();
+    await expect(page.locator('.intro').count()).resolves.toBe(0);
+    await page.context().close();
+  });
+
+  it('照片：先全部載入再以每張 0.1 秒播放；可以按 Skip 跳過', async () => {
+    const page = await openPhone();
+    // 用假的 manifest 和 6 張圖模擬 Storage 上的照片
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    await page.route('**/intro/manifest.json', (r) =>
+      r.fulfill({ contentType: 'application/json', body: JSON.stringify({ photos: ['1.png', '2.png', '3.png', '4.png', '5.png', '6.png'] }) }),
+    );
+    await page.route('**/intro/*.png', (r) => r.fulfill({ contentType: 'image/png', body: png }));
+    await page.goto(base + '/?intro=1');
+    await page.locator('.intro-photo').first().waitFor({ state: 'attached' });
+    await expect(page.locator('.intro-photo').count()).resolves.toBe(6);
+    await expect(page.locator('.intro-photo.on').count()).resolves.toBe(1);
+    await page.getByRole('button', { name: /Skip/ }).click();
+    await page.locator('.intro').waitFor({ state: 'detached', timeout: 2000 });
+    await page.getByLabel('你的姓名').waitFor();
+    await page.context().close();
+  });
+
+  it('系統設定「減少動態效果」時不播', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
+    const page = await ctx.newPage();
+    await page.goto(base + '/');
+    await page.getByLabel('你的姓名').waitFor();
+    await expect(page.locator('.intro').count()).resolves.toBe(0);
+    await ctx.close();
   });
 });
 
@@ -189,7 +238,8 @@ describe('瀏覽器實測：學生下單 → 大螢幕', () => {
     expect(Math.max(...latencies)).toBeLessThan(2000);
     await expect(boardTotal(screen, '第2組')).resolves.toBe('30萬');
     await expect(row.locator('.hold-amount').innerText()).resolves.toContain('30');
-    await expect(phone.locator('.wallet-value').innerText()).resolves.toContain('70');
+    // 餘額數字會滑動到新值，等它停下來
+    await expect.poll(() => phone.locator('.wallet-value').innerText(), { timeout: 2000 }).toContain('70');
 
     // 超過單組上限：擋下並提示，金額不變
     await phone.getByRole('button', { name: '5 萬', exact: true }).click();
@@ -209,7 +259,7 @@ describe('瀏覽器實測：學生下單 → 大螢幕', () => {
     const third = phone.locator('.stock', { hasText: '第3組' });
     await third.getByRole('button', { name: /第3組 增加/ }).click();
     await expect(third.locator('.hold-amount').innerText()).resolves.toContain('5');
-    await expect(phone.locator('.wallet-value').innerText()).resolves.toContain('45');
+    await expect.poll(() => phone.locator('.wallet-value').innerText(), { timeout: 2000 }).toContain('45');
 
     // 倒數結束自動封盤，大螢幕揭曉結果，學生看到自己的報酬
     await screen.getByText('股神獎', { exact: true }).waitFor({ timeout: (DARK_SECONDS + 3) * 1000 });

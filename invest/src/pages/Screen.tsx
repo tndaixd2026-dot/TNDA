@@ -1,12 +1,15 @@
 // 現場大螢幕（65 吋橫式）：開盤中顯示走勢與排行，暗盤顯示倒數，封盤後揭曉結果。
 // 網址加 ?course=wed 或 ?course=thu 可固定顯示某一場，否則跟著管理員目前的場次。
-import { useEffect } from 'preact/hooks';
+import type { ComponentChildren } from 'preact';
+import { useEffect, useRef } from 'preact/hooks';
 import { clockTime, countdown, wan } from '../../shared/format.ts';
 import { splitGroupLabel } from '../../shared/roster.ts';
 import { courseLabel, type CourseId, type HistoryPoint, type PublicCourse } from '../../shared/types.ts';
 import { useLive, useNow } from '../api.ts';
 import { Chart } from '../ui/Chart.tsx';
 import { Eyebrow, GroupName, Logo, PhaseBadge, QrCode, Swatch, groupIndexMap, pad2 } from '../ui/common.tsx';
+import { useFlip } from '../ui/motion.ts';
+import { Count, Sparkle, Ticker, Wan, WinBar } from '../ui/y2k.tsx';
 
 export function Screen() {
   useEffect(() => {
@@ -29,7 +32,7 @@ export function Screen() {
   const joinUrl = new URL('../', `${location.origin}${location.pathname}`).href;
 
   return (
-    <div class={`screen screen-phase-${pc.phase}`}>
+    <div class={`screen screen-phase-${pc.phase}${pc.phase !== 'closed' ? ' has-ticker' : ''}`}>
       <header class="screen-header">
         <div class="screen-title">
           <Logo tone={pc.phase === 'pending' ? 'black' : 'white'} size={56} />
@@ -41,10 +44,18 @@ export function Screen() {
         <PhaseBadge phase={pc.phase} remainingMs={pc.darkEndsAt ? pc.darkEndsAt - now : undefined} />
         <div class="screen-stats">
           <span>
-            已登入 <strong>{pc.joined}</strong> / {pc.students}
+            已登入{' '}
+            <strong>
+              <Count value={pc.joined} />
+            </strong>{' '}
+            / {pc.students}
           </span>
           <span>
-            已投完 <strong>{pc.fullyInvested}</strong> / {pc.students}
+            已投完{' '}
+            <strong>
+              <Count value={pc.fullyInvested} />
+            </strong>{' '}
+            / {pc.students}
           </span>
           <span class="screen-clock">{clockTime(now)}</span>
           {!live.connected && <span class="screen-offline">重新連線中…</span>}
@@ -52,16 +63,37 @@ export function Screen() {
       </header>
 
       {pc.phase === 'pending' && <PendingView pc={pc} joinUrl={joinUrl} darkMs={live.pub.darkMs} />}
-      {pc.phase === 'open' && <LiveView pc={pc} points={points} now={now} joinUrl={joinUrl} />}
+      {pc.phase === 'open' && <LiveView pc={pc} points={points} now={now} offset={live.offset} joinUrl={joinUrl} />}
       {pc.phase === 'dark' && <DarkView pc={pc} now={now} joinUrl={joinUrl} />}
       {pc.phase === 'closed' && <ResultsView pc={pc} points={points} now={now} />}
+      {pc.phase !== 'closed' && <ScreenTicker pc={pc} />}
     </div>
   );
+}
+
+/** 底部跑馬燈：未開盤跑規則、開盤中跑各組金額、暗盤只跑提示（不含任何金額） */
+function ScreenTicker({ pc }: { pc: PublicCourse }) {
+  let items: ComponentChildren[];
+  if (pc.phase === 'open') {
+    const ranked = [...pc.groups].sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0));
+    items = ranked.map((g) => (
+      <span>
+        <span class="tk-rank">No.{pad2(g.rank ?? 0)}</span> {splitGroupLabel(g.id).short}{' '}
+        <span class="tk-value">{wan(g.total ?? 0)} 萬</span>
+      </span>
+    ));
+  } else if (pc.phase === 'dark') {
+    items = ['Dark Mode', '暗盤中', '金額與排名已隱藏', '倒數結束自動封盤', '還沒投完的同學快調整'];
+  } else {
+    items = ['Live Market', '掃 QR code 加入', '每人 100 萬虛擬資金', '只能投別組', '單一組最多 50 萬', '等待開盤'];
+  }
+  return <Ticker items={items} class={`screen-ticker ticker-${pc.phase}`} />;
 }
 
 function JoinBox({ joinUrl, big }: { joinUrl: string; big?: boolean }) {
   return (
     <div class={`join${big ? ' join-big' : ''}`}>
+      {big && <WinBar title="JOIN.EXE" />}
       <QrCode text={joinUrl} label="掃描加入投資" />
       <div class="join-text">
         <div class="join-title">手機掃碼加入</div>
@@ -77,6 +109,9 @@ function PendingView({ pc, joinUrl, darkMs }: { pc: PublicCourse; joinUrl: strin
   const dark = darkMs % 60_000 === 0 ? `${darkMs / 60_000} 分鐘` : `${Math.round(darkMs / 1000)} 秒`;
   return (
     <main class="screen-pending">
+      <Sparkle class="deco-spark p1" size="5rem" color="#fff" />
+      <Sparkle class="deco-spark p2" size="2.4rem" color="#000" />
+      <Sparkle class="deco-spark p3" size="3.2rem" color="#fff" />
       <div class="pending-main">
         <div class="pending-kicker">Standby · 等待開盤</div>
         <h1 class="pending-title">
@@ -120,30 +155,46 @@ function totalsAt(points: HistoryPoint[], t: number): Record<string, number> | n
   return found?.totals ?? null;
 }
 
-function LiveView({ pc, points, now, joinUrl }: { pc: PublicCourse; points: HistoryPoint[]; now: number; joinUrl: string }) {
+function LiveView({
+  pc,
+  points,
+  now,
+  offset,
+  joinUrl,
+}: {
+  pc: PublicCourse;
+  points: HistoryPoint[];
+  now: number;
+  offset: number;
+  joinUrl: string;
+}) {
   const idx = groupIndexMap(pc);
+  const boardRef = useRef<HTMLOListElement>(null);
+  useFlip(boardRef);
   const ids = pc.groups.map((g) => g.id);
   const before = totalsAt(points, now - 60_000) ?? points[0]?.totals ?? {};
   const ranked = [...pc.groups].sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0) || (idx.get(a.id) ?? 0) - (idx.get(b.id) ?? 0));
   return (
     <main class="screen-live">
       <section class="screen-chart-panel">
-        <Chart groups={ids} points={points} now={now} live label="各組獲得金額的即時走勢" />
+        <WinBar title="MARKET_CHART.EXE" />
+        <Chart groups={ids} points={points} now={now} offset={offset} live label="各組獲得金額的即時走勢" />
       </section>
       <aside class="screen-board">
+        <WinBar title="RANKING.EXE" tone="orange" />
         <h2 class="board-title">
           <Eyebrow>Ranking · 目前排行</Eyebrow>
         </h2>
-        <ol class="board">
+        <ol class="board" ref={boardRef}>
           {ranked.map((g) => {
             const delta = (g.total ?? 0) - (before[g.id] ?? 0);
             return (
-              <li key={g.id} class="board-row">
+              <li key={g.id} data-key={g.id} class={`board-row${g.rank === 1 ? ' board-top' : ''}`}>
                 <span class="board-rank">{pad2(g.rank ?? 0)}</span>
                 <GroupName id={g.id} index={idx.get(g.id) ?? 0} stacked />
                 <span class="board-value">
                   <span class="board-total">
-                    {wan(g.total ?? 0)}
+                    <Wan value={g.total ?? 0} ms={350} />
                     <small>萬</small>
                   </span>
                   <span class="board-delta">
@@ -166,11 +217,14 @@ function DarkView({ pc, now, joinUrl }: { pc: PublicCourse; now: number; joinUrl
   return (
     <main class="screen-dark">
       <div class="dark-main">
+        <Sparkle class="dark-spark" size="3rem" color="var(--tnda-orange)" />
         <div class="dark-kicker">
           <span class="display">Dark</span> 暗盤中 · 金額與排名已隱藏
         </div>
-        <div class="dark-countdown" role="timer" aria-live="off">
-          {countdown(left)}
+        <div class={`dark-countdown${left <= 10_000 ? ' dark-final' : ''}`} role="timer" aria-live="off">
+          <span key={Math.ceil(left / 1000)} class="tick">
+            {countdown(left)}
+          </span>
         </div>
         <div class="dark-hint">倒數結束自動封盤 · 還沒投完的同學快調整</div>
         <div class="pending-groups">
@@ -198,6 +252,9 @@ function ResultsView({ pc, points, now }: { pc: PublicCourse; points: HistoryPoi
     <main class="screen-results">
       <section class="awards">
         <div class="award award-rocket">
+          <WinBar title="TOP_GROUP.EXE" />
+          <Sparkle class="award-spark a1" size="3.4rem" color="#fff" />
+          <Sparkle class="award-spark a2" size="1.8rem" color="#000" />
           <div class="award-title">
             <span class="display">Top Group</span>
             <span class="award-title-zh">一飛沖天獎</span>
@@ -206,12 +263,17 @@ function ResultsView({ pc, points, now }: { pc: PublicCourse; points: HistoryPoi
             {rocket.map((g) => (
               <div key={g.group} class="award-winner">
                 <GroupName id={g.group} index={idx.get(g.group) ?? 0} stacked />
-                <span class="award-amount">{wan(g.final)} 萬</span>
+                <span class="award-amount">
+                  <Wan value={g.final} ms={1600} from={0} /> 萬
+                </span>
               </div>
             ))}
           </div>
         </div>
         <div class="award award-god">
+          <WinBar title="TOP_INVESTOR.EXE" tone="orange" />
+          <Sparkle class="award-spark a1" size="3.4rem" color="var(--tnda-orange)" />
+          <Sparkle class="award-spark a2" size="1.8rem" color="#000" />
           <div class="award-title">
             <span class="display">Top Investor</span>
             <span class="award-title-zh">股神獎</span>
@@ -221,7 +283,9 @@ function ResultsView({ pc, points, now }: { pc: PublicCourse; points: HistoryPoi
               <div key={i.name} class="award-winner">
                 <span class="award-name">{i.name}</span>
                 <span class="award-sub">{splitGroupLabel(i.group).short}</span>
-                <span class="award-amount">報酬 {wan(i.payout)} 萬</span>
+                <span class="award-amount">
+                  報酬 <Wan value={i.payout} ms={1600} from={0} /> 萬
+                </span>
               </div>
             ))}
             {gods.length > 6 && <div class="award-sub">…等 {gods.length} 人並列</div>}
@@ -231,6 +295,7 @@ function ResultsView({ pc, points, now }: { pc: PublicCourse; points: HistoryPoi
         </div>
       </section>
       <section class="final-table-panel">
+        <WinBar title="FINAL_RESULTS.EXE" />
         <table class="final-table">
           <thead>
             <tr>
@@ -260,6 +325,7 @@ function ResultsView({ pc, points, now }: { pc: PublicCourse; points: HistoryPoi
         <div class="ft-note">單位：萬　倒扣 = 有登入的組員封盤時沒投完的錢（沒登入過的不倒扣）</div>
       </section>
       <section class="final-chart-panel">
+        <WinBar title="MARKET_CHART.EXE" />
         <Chart
           groups={ids}
           points={points}

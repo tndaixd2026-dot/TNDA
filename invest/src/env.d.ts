@@ -3,4 +3,6 @@ interface ImportMetaEnv {
   readonly VITE_SUPABASE_URL?: string;
   /** Supabase anon（publishable）金鑰：公開的，只能呼叫 invest_* RPC */
   readonly VITE_SUPABASE_ANON_KEY?: string;
+  /** 進場動畫照片的資料夾網址（裡面有 manifest.json）；空字串表示不放照片 */
+  readonly VITE_INTRO_PHOTOS?: string;
 }
