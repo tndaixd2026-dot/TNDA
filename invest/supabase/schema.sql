@@ -73,12 +73,24 @@ create table if not exists invest.history (
 );
 create index if not exists history_course_id on invest.history (course, id);
 
+-- 出席紀錄（登入動畫的「出席率行情看板」用）：一列 = 一位學生 × 一場 × 一週
+create table if not exists invest.attendance (
+  course text not null check (course in ('wed', 'thu')),
+  name_key text not null,
+  week int not null check (week between 0 and 60),
+  status text not null check (status in ('present', 'late', 'leave', 'absent')),
+  primary key (course, name_key, week)
+);
+-- 看板是否公開（學生登入頁看得到姓名與出席率）
+alter table invest.config add column if not exists board_visible boolean not null default true;
+
 alter table invest.config enable row level security;
 alter table invest.roster enable row level security;
 alter table invest.course enable row level security;
 alter table invest.alloc enable row level security;
 alter table invest.presence enable row level security;
 alter table invest.history enable row level security;
+alter table invest.attendance enable row level security;
 
 -- ---------- 小工具 ----------
 
@@ -524,9 +536,55 @@ language sql stable set search_path = '' as $$
       select jsonb_agg(jsonb_build_object('name', r.name, 'course', r.course, 'group', r.grp)
                        order by r.course desc, r.name collate "C")
       from invest.roster r), '[]'::jsonb),
-    'courses', jsonb_build_object('wed', invest.admin_course('wed'), 'thu', invest.admin_course('thu'))
+    'courses', jsonb_build_object('wed', invest.admin_course('wed'), 'thu', invest.admin_course('thu')),
+    'board', jsonb_build_object(
+      'visible', cfg.board_visible,
+      'wed', (select jsonb_build_object('students', count(distinct a.name_key), 'weeks', count(distinct a.week))
+              from invest.attendance a where a.course = 'wed'),
+      'thu', (select jsonb_build_object('students', count(distinct a.name_key), 'weeks', count(distinct a.week))
+              from invest.attendance a where a.course = 'thu'))
   )
   from invest.config cfg where cfg.id = 1
+$$;
+
+-- 出席率行情：目前場次每位學生「每週累計出席率」的走勢
+-- 出席 = 參＋遲；應到 = 參＋遲＋缺（請假不計入）。還沒有任何應到的週次為 null。
+create or replace function invest.attendance_board(c text) returns jsonb
+language sql stable set search_path = '' as $$
+  with w as (
+    select coalesce(array_agg(distinct a.week order by a.week), '{}') as weeks
+    from invest.attendance a where a.course = c
+  ),
+  r as (select ro.name_key, ro.name, ro.grp from invest.roster ro where ro.course = c),
+  grid as (
+    select r.name_key, wk.week, a.status
+    from r cross join w cross join unnest(w.weeks) as wk(week)
+    left join invest.attendance a on a.course = c and a.name_key = r.name_key and a.week = wk.week
+  ),
+  cum as (
+    select g.name_key, g.week,
+           sum(case when g.status in ('present', 'late') then 1 else 0 end) over (partition by g.name_key order by g.week) as att,
+           sum(case when g.status in ('present', 'late', 'absent') then 1 else 0 end) over (partition by g.name_key order by g.week) as cnt
+    from grid g
+  ),
+  ser as (
+    select cu.name_key,
+           jsonb_agg(case when cu.cnt > 0 then round(cu.att * 1000.0 / cu.cnt) / 10 end order by cu.week) as series,
+           (array_agg(cu.att order by cu.week desc))[1] as att,
+           (array_agg(cu.cnt order by cu.week desc))[1] as cnt
+    from cum cu group by cu.name_key
+  )
+  select jsonb_build_object(
+    'course', c,
+    'weeks', to_jsonb(w.weeks),
+    -- 還沒匯入任何出席資料時不回傳姓名
+    'rows', case when coalesce(array_length(w.weeks, 1), 0) = 0 then '[]'::jsonb else coalesce((
+      select jsonb_agg(jsonb_build_object('name', r.name, 'group', r.grp, 'series', s.series,
+                                          'attended', s.att, 'total', s.cnt)
+                       order by invest.group_num(r.grp) nulls last, r.grp collate "C", r.name collate "C")
+      from r join ser s using (name_key)), '[]'::jsonb) end
+  )
+  from w
 $$;
 
 -- =====================================================================
@@ -889,6 +947,94 @@ begin
 end
 $$;
 
+-- 學生登入頁的進場動畫：目前場次的出席率行情看板（管理員可關閉）
+create or replace function public.invest_intro_board() returns jsonb
+language sql stable security definer set search_path = '' as $$
+  select case when cfg.board_visible then invest.attendance_board(cfg.active)
+              else jsonb_build_object('course', cfg.active, 'weeks', '[]'::jsonb, 'rows', '[]'::jsonb) end
+  from invest.config cfg where cfg.id = 1
+$$;
+
+-- 匯入出席紀錄（整份取代）。entries = [{course: wed|thu, name, week, status: 參|遲|假|缺}]
+-- 名單上找不到的姓名不匯入、列在 unmatched；apply = false 只預覽。entries = [] 且 apply = true 會清空。
+create or replace function public.invest_admin_attendance(pw text, entries jsonb, apply boolean default false) returns jsonb
+language plpgsql volatile security definer set search_path = '' as $$
+declare
+  v_apply boolean := coalesce(apply, false);
+  v_errors text[] := '{}';
+  v_clean jsonb := '{}'::jsonb;  -- key: course:name_key:week → row（重複的以最後一筆為準）
+  v_unmatched jsonb := '{}'::jsonb;
+  e jsonb;
+  i int := 0;
+  v_course text;
+  v_name text;
+  v_key text;
+  v_week int;
+  v_status text;
+  v_raw text;
+begin
+  if not invest.check_admin(pw) then return invest.err('unauthorized', '管理員密碼錯誤'); end if;
+  if entries is null or jsonb_typeof(entries) <> 'array' then return invest.err('bad_attendance', '出席資料格式錯誤'); end if;
+
+  for e in select x from jsonb_array_elements(entries) x loop
+    i := i + 1;
+    v_course := e ->> 'course';
+    v_name := invest.norm_name(e ->> 'name');
+    v_raw := btrim(coalesce(e ->> 'status', ''));
+    v_status := case
+      when v_raw in ('參', '出席', '到', 'present', 'P') then 'present'
+      when v_raw in ('遲', '遲到', 'late', 'L') then 'late'
+      when v_raw in ('假', '請假', 'leave', 'E') then 'leave'
+      when v_raw in ('缺', '缺席', '曠', 'absent', 'A') then 'absent'
+      else null end;
+    if v_course is null or v_course not in ('wed', 'thu') then
+      v_errors := v_errors || format('第 %s 筆：課堂必須是週三（VSAI）或週四（跨域）', i); continue;
+    end if;
+    if v_name = '' then v_errors := v_errors || format('第 %s 筆：姓名是空的', i); continue; end if;
+    if (e ->> 'week') !~ '^\s*\d{1,2}\s*$' then v_errors := v_errors || format('第 %s 筆：週次要是數字', i); continue; end if;
+    v_week := (e ->> 'week')::int;
+    -- 未紀錄、尚未加入：略過不算
+    if v_status is null then continue; end if;
+    v_key := invest.name_key(v_name);
+    if not exists (select 1 from invest.roster ro where ro.course = v_course and ro.name_key = v_key) then
+      v_unmatched := v_unmatched || jsonb_build_object(v_course || ':' || v_key,
+                       jsonb_build_object('course', v_course, 'name', v_name));
+      continue;
+    end if;
+    v_clean := v_clean || jsonb_build_object(format('%s:%s:%s', v_course, v_key, v_week),
+                 jsonb_build_object('course', v_course, 'key', v_key, 'week', v_week, 'status', v_status));
+  end loop;
+
+  if v_apply and coalesce(array_length(v_errors, 1), 0) = 0 then
+    delete from invest.attendance;
+    insert into invest.attendance (course, name_key, week, status)
+    select x ->> 'course', x ->> 'key', (x ->> 'week')::int, x ->> 'status' from jsonb_each(v_clean) as t(k, x);
+  end if;
+
+  return jsonb_build_object(
+    'ok', coalesce(array_length(v_errors, 1), 0) = 0,
+    'applied', v_apply and coalesce(array_length(v_errors, 1), 0) = 0,
+    'errors', to_jsonb(v_errors[1:20]),
+    'records', (select count(*) from jsonb_each(v_clean)),
+    'summary', coalesce((
+      select jsonb_agg(jsonb_build_object('course', s.course, 'students', s.students, 'weeks', s.weeks) order by s.course desc)
+      from (select x ->> 'course' as course, count(distinct x ->> 'key') as students,
+                   count(distinct x ->> 'week') as weeks
+            from jsonb_each(v_clean) as t(k, x) group by 1) s), '[]'::jsonb),
+    'unmatched', coalesce((select jsonb_agg(x order by x ->> 'course' desc, x ->> 'name') from jsonb_each(v_unmatched) as t(k, x)), '[]'::jsonb)
+  );
+end
+$$;
+
+create or replace function public.invest_admin_board(pw text, visible boolean) returns jsonb
+language plpgsql volatile security definer set search_path = '' as $$
+begin
+  if not invest.check_admin(pw) then return invest.err('unauthorized', '管理員密碼錯誤'); end if;
+  update invest.config set board_visible = coalesce(visible, true) where id = 1;
+  return jsonb_build_object('visible', coalesce(visible, true));
+end
+$$;
+
 -- 完整結算（含姓名），給管理員下載 CSV
 create or replace function public.invest_admin_results(pw text, course text) returns jsonb
 language plpgsql volatile security definer set search_path = '' as $$
@@ -918,7 +1064,8 @@ begin
     'invest_state(bigint)', 'invest_history(bigint, bigint)', 'invest_me(text)',
     'invest_invest(text, text, text, numeric)', 'invest_admin_check(text)', 'invest_admin_overview(text)',
     'invest_admin_set_active(text, text)', 'invest_admin_phase(text, text, text)', 'invest_admin_reset(text, text)',
-    'invest_admin_roster(text, jsonb, boolean)', 'invest_admin_results(text, text)'
+    'invest_admin_roster(text, jsonb, boolean)', 'invest_admin_results(text, text)',
+    'invest_intro_board()', 'invest_admin_attendance(text, jsonb, boolean)', 'invest_admin_board(text, boolean)'
   ] loop
     execute format('revoke all on function public.%s from public', fn);
     select exists (select 1 from pg_roles where rolname = 'anon') into has_role;

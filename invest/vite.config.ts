@@ -10,18 +10,14 @@ export default defineConfig(({ mode }) => {
   const deploy = JSON.parse(readFileSync(resolve(__dirname, 'deploy.config.json'), 'utf8')) as {
     supabaseUrl: string;
     supabaseAnonKey: string;
-    introPhotos?: string;
   };
   const url = local ? '' : (process.env.VITE_SUPABASE_URL ?? deploy.supabaseUrl);
   const key = local ? '' : (process.env.VITE_SUPABASE_ANON_KEY ?? deploy.supabaseAnonKey);
-  // 進場動畫照片：正式版放 Supabase Storage；本機版放 public/intro/（兩者都不進 git）
-  const intro = process.env.VITE_INTRO_PHOTOS ?? (local ? './intro/' : (deploy.introPhotos ?? ''));
   return {
     base: './',
     define: {
       'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(url),
       'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(key),
-      'import.meta.env.VITE_INTRO_PHOTOS': JSON.stringify(intro),
     },
     build: {
       outDir: 'dist',

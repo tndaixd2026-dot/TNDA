@@ -165,6 +165,18 @@ export interface AdminOverview {
   darkMs: number;
   roster: RosterEntry[];
   courses: Record<CourseId, AdminCourse>;
+  /** 登入動畫的出席率看板 */
+  board: { visible: boolean; wed: { students: number; weeks: number }; thu: { students: number; weeks: number } };
+}
+
+export interface AttendancePreview {
+  ok: boolean;
+  applied: boolean;
+  errors: string[];
+  records: number;
+  summary: { course: CourseId; students: number; weeks: number }[];
+  /** 名單上找不到的姓名（不會匯入） */
+  unmatched: { course: CourseId; name: string }[];
 }
 
 export interface RosterPreview {

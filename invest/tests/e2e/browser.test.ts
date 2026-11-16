@@ -158,16 +158,22 @@ describe('npm start 啟動後三個頁面都能開', () => {
   });
 });
 
-describe('學生登入頁的進場動畫', () => {
-  it('第一次開啟會播進場動畫（沒有照片時播文字短版），播完自動進入登入表單；同一個分頁不再播', async () => {
+describe('學生登入頁的進場動畫：出席率行情看板', () => {
+  it('第一次開啟會播：目前場次每位學生一列、數字從第一週快轉到最近一週；播完才能登入；同一分頁不再播', async () => {
     const page = await openPhone();
-    // 不受本機 public/intro/ 裡有沒有照片影響：這裡模擬「還沒放照片」
-    await page.route('**/intro/manifest.json', (r) => r.fulfill({ status: 404, body: '' }));
     await page.goto(base + '/');
     await page.locator('.intro').waitFor();
-    // 播放中登入表單不能操作
     await expect(page.locator('.login-inner').getAttribute('inert')).resolves.not.toBeNull();
-    await page.locator('.intro').waitFor({ state: 'detached', timeout: 8000 });
+    // 本機版的假名單：週三 20 人、第 2～17 週
+    await page.locator('.bs-row').first().waitFor();
+    await expect(page.locator('.bs-row').count()).resolves.toBe(20);
+    const firstWeek = await page.locator('.bs-week').innerText();
+    await page.locator('.intro-stamp .intro-title').waitFor({ timeout: 8000 });
+    expect(firstWeek).toBe('W02');
+    await expect(page.locator('.bs-week').innerText()).resolves.toBe('W17');
+    // 最後一週的出席／應到次數
+    await expect(page.locator('.bs-vol').first().innerText()).resolves.toMatch(/^\d+\/\d+$/);
+    await page.locator('.intro').waitFor({ state: 'detached', timeout: 4000 });
     await expect(page.locator('.login-inner').getAttribute('inert')).resolves.toBeNull();
     await page.getByLabel('你的姓名').fill('王小明');
     await page.reload();
@@ -175,25 +181,26 @@ describe('學生登入頁的進場動畫', () => {
     await page.context().close();
   });
 
-  it('照片：先全部載入再以每張 0.1 秒播放；可以按 Skip 跳過', async () => {
+  it('可以按 Skip 跳過', async () => {
     const page = await openPhone();
-    // 用假的 manifest 和 6 張圖模擬 Storage 上的照片
-    const png = Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-      'base64',
-    );
-    await page.route('**/intro/manifest.json', (r) =>
-      r.fulfill({ contentType: 'application/json', body: JSON.stringify({ photos: ['1.png', '2.png', '3.png', '4.png', '5.png', '6.png'] }) }),
-    );
-    await page.route('**/intro/*.png', (r) => r.fulfill({ contentType: 'image/png', body: png }));
     await page.goto(base + '/?intro=1');
-    await page.locator('.intro-photo').first().waitFor({ state: 'attached' });
-    await expect(page.locator('.intro-photo').count()).resolves.toBe(6);
-    await expect(page.locator('.intro-photo.on').count()).resolves.toBe(1);
+    await page.locator('.bs-row').first().waitFor();
     await page.getByRole('button', { name: /Skip/ }).click();
     await page.locator('.intro').waitFor({ state: 'detached', timeout: 2000 });
     await page.getByLabel('你的姓名').waitFor();
     await page.context().close();
+  });
+
+  it('管理員關閉看板後，只播標題，頁面上沒有任何學生姓名', async () => {
+    await admin('invest_admin_board', { visible: false });
+    const page = await openPhone();
+    await page.goto(base + '/?intro=1');
+    await page.locator('.intro-title').waitFor();
+    await expect(page.locator('.bs-row').count()).resolves.toBe(0);
+    expect(await page.evaluate(() => document.body.innerText)).not.toContain('王小明');
+    await page.locator('.intro').waitFor({ state: 'detached', timeout: 4000 });
+    await page.context().close();
+    await admin('invest_admin_board', { visible: true });
   });
 
   it('系統設定「減少動態效果」時不播', async () => {
@@ -220,6 +227,8 @@ describe('瀏覽器實測：學生下單 → 大螢幕', () => {
 
     const latencies: number[] = [];
     for (const expected of ['10萬', '20萬', '30萬']) {
+      // 先等按鈕停止進場動畫（Playwright 會等元素不再移動才點），從真正按下的那一刻開始計時
+      await plus.click({ trial: true });
       const t0 = Date.now();
       await plus.click();
       await screen.waitForFunction(

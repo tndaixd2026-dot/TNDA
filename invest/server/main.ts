@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp } from './app.ts';
 import { openDb } from './db.ts';
-import { seedRoster } from './seed.ts';
+import { seedAttendance, seedRoster } from './seed.ts';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const env = process.env;
@@ -35,6 +35,7 @@ const db = await openDb({
   adminPassword,
   darkMs: darkSeconds ? darkSeconds * 1000 : undefined,
   seed: seedRoster(),
+  seedAttendance: seedAttendance(),
 });
 const server = createApp(db, { staticDir: join(root, 'dist') });
 
