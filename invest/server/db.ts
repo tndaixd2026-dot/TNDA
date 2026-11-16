@@ -17,6 +17,8 @@ export interface DbOptions {
   darkMs?: number;
   /** 名單是空的時候放入的假資料 */
   seed?: RosterEntry[];
+  /** 假的出席紀錄：只在名單是空的、正在放入 seed 名單時一起放入 */
+  seedAttendance?: { course: string; name: string; week: number; status: string }[];
 }
 
 export class RpcError extends Error {
@@ -51,6 +53,15 @@ export async function openDb(opts: DbOptions) {
          on conflict do nothing`,
         [JSON.stringify(opts.seed)],
       );
+      if (opts.seedAttendance?.length) {
+        await pg.query(
+          `insert into invest.attendance (course, name_key, week, status)
+           select e ->> 'course', invest.name_key(e ->> 'name'), (e ->> 'week')::int, e ->> 'status'
+           from jsonb_array_elements($1::jsonb) e
+           on conflict do nothing`,
+          [JSON.stringify(opts.seedAttendance)],
+        );
+      }
     }
   }
 

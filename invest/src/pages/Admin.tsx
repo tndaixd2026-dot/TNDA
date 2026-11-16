@@ -6,12 +6,14 @@ import {
   COURSE_IDS,
   courseLabel,
   type AdminOverview,
+  type AttendancePreview,
   type CourseId,
   type PublicCourse,
   type Results,
   type RosterPreview,
 } from '../../shared/types.ts';
 import { resultsCsv } from '../../shared/csv.ts';
+import { parseAttendanceCsv } from '../../shared/attendance.ts';
 import { ApiError, rpc, storageGet, storageSet, useLive, useNow } from '../api.ts';
 import { Card, ConnectionDot, Eyebrow, Logo, PhaseBadge, useToast } from '../ui/common.tsx';
 
@@ -307,6 +309,8 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
 
       <RosterCard ov={ov} pw={pw} onApplied={(next) => setOv(next)} notify={toast.show} />
 
+      <BoardCard ov={ov} pw={pw} onChanged={(next) => setOv(next)} notify={toast.show} />
+
       <Card class="danger-card">
         <h2 class="card-title">
           <Eyebrow>Rehearsal · 彩排工具</Eyebrow>
@@ -482,6 +486,175 @@ function RosterCard({
                 </li>
               ))}
             </ul>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/** 登入動畫的「出席率行情看板」：匯入出席紀錄、開關 */
+function BoardCard({
+  ov,
+  pw,
+  onChanged,
+  notify,
+}: {
+  ov: AdminOverview;
+  pw: string;
+  onChanged: (ov: AdminOverview) => void;
+  notify: (text: string, tone?: 'info' | 'error') => void;
+}) {
+  const [csv, setCsv] = useState('');
+  const [preview, setPreview] = useState<AttendancePreview | null>(null);
+  const [busy, setBusy] = useState(false);
+  const board = ov.board;
+
+  async function reload() {
+    onChanged(await rpc<AdminOverview>('invest_admin_overview', { pw }));
+  }
+
+  async function send(apply: boolean, clear = false): Promise<AttendancePreview> {
+    if (clear) return rpc<AttendancePreview>('invest_admin_attendance', { pw, entries: [], apply: true });
+    const parsed = parseAttendanceCsv(csv);
+    if (parsed.errors.length) {
+      return { ok: false, applied: false, errors: parsed.errors, records: 0, summary: [], unmatched: [] };
+    }
+    return rpc<AttendancePreview>('invest_admin_attendance', { pw, entries: parsed.entries, apply });
+  }
+
+  async function run(fn: () => Promise<void>) {
+    setBusy(true);
+    try {
+      await fn();
+    } catch (err) {
+      notify((err as Error).message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadFile(e: Event) {
+    const file = (e.target as HTMLInputElement).files?.[0];
+    if (!file) return;
+    setCsv(await file.text());
+    setPreview(null);
+  }
+
+  return (
+    <Card>
+      <h2 class="card-title">
+        <Eyebrow>Attendance Board · 出席率看板（登入動畫）</Eyebrow>
+      </h2>
+      <p class="muted">
+        學生打開登入頁時，會先看到一段像股市報價看板的動畫：每位學生是一檔股票，數字是累計出席率，從第一週快轉到最近一週。
+        看板只顯示目前場次的學生。<strong>任何打開學生頁的人都看得到姓名與出席率</strong>，不想公開時請關閉。
+      </p>
+      <div class="stat-row">
+        {COURSE_IDS.map((c) => (
+          <div class="stat" key={c}>
+            <div class="stat-label">{courseLabel(c)}</div>
+            <div class="stat-value">{board[c].students}</div>
+            <div class="muted">位學生 · {board[c].weeks} 週紀錄</div>
+          </div>
+        ))}
+        <div class="stat">
+          <div class="stat-label">登入動畫</div>
+          <div class="stat-value">{board.visible ? 'ON' : 'OFF'}</div>
+          <div class="muted">{board.visible ? '顯示姓名與出席率' : '只播標題'}</div>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button
+          class={`btn ${board.visible ? 'btn-outline' : 'btn-accent'}`}
+          disabled={busy}
+          onClick={() =>
+            run(async () => {
+              await rpc('invest_admin_board', { pw, visible: !board.visible });
+              await reload();
+              notify(board.visible ? '已關閉出席率看板' : '已開啟出席率看板');
+            })
+          }
+        >
+          {board.visible ? '關閉看板' : '開啟看板'}
+        </button>
+        <a class="btn" href="../?intro=1" target="_blank" rel="noopener">
+          預覽登入動畫
+        </a>
+      </div>
+
+      <h3 class="sub-title">匯入出席紀錄</h3>
+      <p class="muted">
+        直接上傳 Notion「出勤紀錄」資料庫匯出的 CSV，或自己整理成「課堂, 姓名, 週次, 狀態」。課堂填 週三／VSAI 或 週四／跨域；狀態填 參、遲、假、缺（未紀錄會略過）。
+        出席率 = (參 + 遲) ÷ (參 + 遲 + 缺)，請假不計入。匯入會取代全部舊的出席紀錄。
+      </p>
+      <input type="file" accept=".csv,text/csv,text/plain" onChange={loadFile} />
+      <textarea
+        class="text-area"
+        rows={5}
+        value={csv}
+        placeholder={'課堂,姓名,週次,狀態\nVSAI,王小明,2,參\n跨域,王小明,2,遲'}
+        onInput={(e) => {
+          setCsv((e.target as HTMLTextAreaElement).value);
+          setPreview(null);
+        }}
+      />
+      <div class="btn-row">
+        <button class="btn" disabled={busy || !csv.trim()} onClick={() => run(async () => setPreview(await send(false)))}>
+          預覽
+        </button>
+        <button
+          class="btn btn-primary"
+          disabled={busy || !preview?.ok}
+          onClick={() =>
+            run(async () => {
+              if (!confirm('用這份紀錄取代全部出席資料？')) return;
+              const result = await send(true);
+              setPreview(result.applied ? null : result);
+              if (result.applied) {
+                setCsv('');
+                await reload();
+                notify(`已匯入 ${result.records} 筆出席紀錄`);
+              }
+            })
+          }
+        >
+          確認匯入
+        </button>
+        <button
+          class="btn btn-danger"
+          disabled={busy || (board.wed.students === 0 && board.thu.students === 0)}
+          onClick={() =>
+            run(async () => {
+              if (!confirm('清除全部出席紀錄？登入動畫會改成只播標題。')) return;
+              await send(true, true);
+              await reload();
+              notify('已清除出席紀錄');
+            })
+          }
+        >
+          清除出席紀錄
+        </button>
+      </div>
+      {preview && (
+        <div class="preview">
+          {preview.errors.length > 0 && (
+            <ul class="form-error">
+              {preview.errors.map((e) => (
+                <li key={e}>{e}</li>
+              ))}
+            </ul>
+          )}
+          {preview.ok && <div>共 {preview.records} 筆可匯入</div>}
+          {preview.summary.map((s) => (
+            <div key={s.course}>
+              <strong>{courseLabel(s.course)}</strong>：{s.students} 位學生、{s.weeks} 週
+            </div>
+          ))}
+          {preview.unmatched.length > 0 && (
+            <div class="warn-list">
+              名單上找不到、不會匯入：{preview.unmatched.map((u) => `${u.name}（${COURSE_CSV_LABEL[u.course]}）`).join('、')}
+            </div>
           )}
         </div>
       )}

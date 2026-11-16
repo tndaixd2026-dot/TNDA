@@ -14,6 +14,8 @@ import {
 } from '../../shared/types.ts';
 import { rpc, storageGet, storageSet, useLive, useNow } from '../api.ts';
 import { Card, ConnectionDot, Eyebrow, GroupName, Logo, PhaseBadge, groupIndexMap, pad2, useToast } from '../ui/common.tsx';
+import { Intro, shouldPlayIntro } from '../ui/Intro.tsx';
+import { Cursor, Sparkle, Wan, WinBar } from '../ui/y2k.tsx';
 
 const NAME_KEY = 'invest.name';
 const STEP_KEY = 'invest.step';
@@ -51,6 +53,7 @@ function Login({ onLogin, notice }: { onLogin: (name: string) => void; notice: s
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(notice);
+  const [intro, setIntro] = useState(() => !notice && shouldPlayIntro());
 
   async function submit(e: Event) {
     e.preventDefault();
@@ -68,18 +71,26 @@ function Login({ onLogin, notice }: { onLogin: (name: string) => void; notice: s
   }
 
   return (
-    <div class="login-page">
-      <div class="login-inner">
+    <div class={`login-page${intro ? ' login-waiting' : ' login-ready'}`}>
+      {intro && <Intro onDone={() => setIntro(false)} />}
+      <Sparkle class="deco-spark d1" size={46} color="#fff" />
+      <Sparkle class="deco-spark d2" size={20} color="#000" />
+      <Sparkle class="deco-spark d3" size={28} color="#fff" />
+      <div class="login-inner" inert={intro || undefined}>
       <header class="login-head">
         <Logo tone="white" size={48} />
         <Eyebrow>Next D · 期末提報</Eyebrow>
         <h1 class="login-title">
           <span class="display">Live Market</span>
-          <span class="login-title-zh">即時投資</span>
+          <span class="login-title-zh">
+            即時投資
+            <Cursor />
+          </span>
         </h1>
         <p class="login-lead">用 100 萬虛擬資金，投給你看好的組。</p>
       </header>
       <form class="card login-card" onSubmit={submit}>
+        <WinBar title="LOGIN.EXE" />
         <label for="name" class="field-label">
           你的姓名
         </label>
@@ -90,7 +101,7 @@ function Login({ onLogin, notice }: { onLogin: (name: string) => void; notice: s
           onInput={(e) => setValue((e.target as HTMLInputElement).value)}
           placeholder="例如：王小明"
           autocomplete="name"
-          autoFocus
+          autoFocus={!intro}
           maxLength={40}
         />
         {error && (
@@ -192,7 +203,9 @@ function Market({ name, onLogout }: { name: string; onLogout: (msg?: string) => 
       <header class="topbar">
         <div class="topbar-row">
           <Logo tone="white" size={34} />
-          <PhaseBadge phase={pc.phase} remainingMs={pc.darkEndsAt ? pc.darkEndsAt - now : undefined} />
+          <span key={pc.phase} class="badge-swap">
+            <PhaseBadge phase={pc.phase} remainingMs={pc.darkEndsAt ? pc.darkEndsAt - now : undefined} />
+          </span>
         </div>
         <div class="topbar-row topbar-sub">
           <div>
@@ -308,10 +321,11 @@ function CourseMarket(p: CourseMarketProps) {
       {pc.phase === 'closed' && <MyResult pc={pc} mine={mine} name={p.name} />}
 
       <Card class="wallet">
+        <WinBar title="WALLET.EXE" />
         <div class="wallet-row">
           <span class="wallet-label">Wallet · 可用餘額</span>
           <span class="wallet-value">
-            {wan(remaining)}
+            <Wan value={remaining} ms={450} />
             <small> 萬</small>
           </span>
         </div>
@@ -354,7 +368,7 @@ function CourseMarket(p: CourseMarketProps) {
         </div>
       )}
 
-      <ul class="stocks">
+      <ul class={`stocks stocks-${pc.phase}`}>
         {pc.groups.map((g) => {
           const i = idx.get(g.id) ?? 0;
           const isOwn = g.id === mine.group;
@@ -371,7 +385,9 @@ function CourseMarket(p: CourseMarketProps) {
                   {(pc.phase === 'open' || pc.phase === 'closed') && g.total !== null && (
                     <>
                       <span class="quote-total">
-                        {wan(g.total)}
+                        <span key={g.total} class="bump">
+                          {wan(g.total)}
+                        </span>
                         <small>萬</small>
                       </span>
                       <span class="quote-rank">
@@ -409,7 +425,9 @@ function CourseMarket(p: CourseMarketProps) {
                     onClick={() => p.setEditing(p.editing === g.id ? null : g.id)}
                     aria-label={`${short} 目前投 ${wan(cur)} 萬，點一下輸入金額`}
                   >
-                    {wan(cur)}
+                    <span key={cur} class="bump">
+                      {wan(cur)}
+                    </span>
                     <small> 萬</small>
                   </button>
                   <button
@@ -505,13 +523,15 @@ function MyResult({ pc, mine, name }: { pc: PublicCourse; mine: MyCourse; name: 
   return (
     <>
       <Card class="result-card">
+        <WinBar title="PAYOUT.EXE" tone="orange" />
+        <Sparkle class="result-spark" size={36} color="var(--tnda-orange)" />
         <div class="result-label">
           <Eyebrow>Payout · 你的報酬</Eyebrow>
         </div>
         {mine.result ? (
           <>
             <div class="result-value">
-              {wan(mine.result.payout)}
+              <Wan value={mine.result.payout} ms={1400} from={0} />
               <small> 萬</small>
             </div>
             <div class="result-rank">

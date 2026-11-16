@@ -97,7 +97,8 @@ async function openScreen(): Promise<Page> {
 }
 
 async function loginStudent(page: Page, name: string) {
-  await page.goto(base + '/');
+  // ?intro=0：跳過進場動畫（進場動畫另外測）
+  await page.goto(base + '/?intro=0');
   await page.getByLabel('你的姓名').fill(name);
   await page.getByRole('button', { name: '進入' }).click();
   await page.getByText('可用餘額').waitFor();
@@ -122,7 +123,7 @@ describe('npm start 啟動後三個頁面都能開', () => {
 
   it('學生頁：登入表單 → 輸入姓名後看到錢包與各組', async () => {
     const page = await openPhone();
-    const res = await page.goto(base + '/');
+    const res = await page.goto(base + '/?intro=0');
     expect(res?.status()).toBe(200);
     await expect(page.getByLabel('你的姓名').isVisible()).resolves.toBe(true);
     await loginStudent(page, '王小明');
@@ -136,7 +137,7 @@ describe('npm start 啟動後三個頁面都能開', () => {
     const page = await openScreen();
     const res = await page.goto(base + '/screen/');
     expect(res?.status()).toBe(200);
-    await page.getByText('等待開盤').waitFor();
+    await page.locator('.pending-kicker', { hasText: '等待開盤' }).waitFor();
     // QR code 指向學生頁
     expect(await page.locator('.join-url').innerText()).toBe(base.replace(/^https?:\/\//, ''));
     await expect(page.locator('svg.qr').count()).resolves.toBe(1);
@@ -157,6 +158,61 @@ describe('npm start 啟動後三個頁面都能開', () => {
   });
 });
 
+describe('學生登入頁的進場動畫：出席率行情看板', () => {
+  it('第一次開啟會播：目前場次每位學生一列、數字從第一週快轉到最近一週；播完才能登入；同一分頁不再播', async () => {
+    const page = await openPhone();
+    await page.goto(base + '/');
+    await page.locator('.intro').waitFor();
+    await expect(page.locator('.login-inner').getAttribute('inert')).resolves.not.toBeNull();
+    // 本機版的假名單：週三 20 人、第 2～17 週
+    await page.locator('.bs-row').first().waitFor();
+    await expect(page.locator('.bs-row').count()).resolves.toBe(20);
+    const firstWeek = await page.locator('.bs-week').innerText();
+    await page.locator('.intro-stamp .intro-title').waitFor({ timeout: 8000 });
+    expect(firstWeek).toBe('W02');
+    await expect(page.locator('.bs-week').innerText()).resolves.toBe('W17');
+    // 最後一週的出席／應到次數
+    await expect(page.locator('.bs-vol').first().innerText()).resolves.toMatch(/^\d+\/\d+$/);
+    await page.locator('.intro').waitFor({ state: 'detached', timeout: 4000 });
+    await expect(page.locator('.login-inner').getAttribute('inert')).resolves.toBeNull();
+    await page.getByLabel('你的姓名').fill('王小明');
+    await page.reload();
+    await expect(page.locator('.intro').count()).resolves.toBe(0);
+    await page.context().close();
+  });
+
+  it('可以按 Skip 跳過', async () => {
+    const page = await openPhone();
+    await page.goto(base + '/?intro=1');
+    await page.locator('.bs-row').first().waitFor();
+    await page.getByRole('button', { name: /Skip/ }).click();
+    await page.locator('.intro').waitFor({ state: 'detached', timeout: 2000 });
+    await page.getByLabel('你的姓名').waitFor();
+    await page.context().close();
+  });
+
+  it('管理員關閉看板後，只播標題，頁面上沒有任何學生姓名', async () => {
+    await admin('invest_admin_board', { visible: false });
+    const page = await openPhone();
+    await page.goto(base + '/?intro=1');
+    await page.locator('.intro-title').waitFor();
+    await expect(page.locator('.bs-row').count()).resolves.toBe(0);
+    expect(await page.evaluate(() => document.body.innerText)).not.toContain('王小明');
+    await page.locator('.intro').waitFor({ state: 'detached', timeout: 4000 });
+    await page.context().close();
+    await admin('invest_admin_board', { visible: true });
+  });
+
+  it('系統設定「減少動態效果」時不播', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
+    const page = await ctx.newPage();
+    await page.goto(base + '/');
+    await page.getByLabel('你的姓名').waitFor();
+    await expect(page.locator('.intro').count()).resolves.toBe(0);
+    await ctx.close();
+  });
+});
+
 describe('瀏覽器實測：學生下單 → 大螢幕', () => {
   it('學生在手機頁按「＋」後，大螢幕畫面 2 秒內顯示新金額；暗盤隱藏金額；倒數結束自動封盤', async () => {
     await admin('invest_admin_phase', { course: 'wed', action: 'open' });
@@ -171,6 +227,8 @@ describe('瀏覽器實測：學生下單 → 大螢幕', () => {
 
     const latencies: number[] = [];
     for (const expected of ['10萬', '20萬', '30萬']) {
+      // 先等按鈕停止進場動畫（Playwright 會等元素不再移動才點），從真正按下的那一刻開始計時
+      await plus.click({ trial: true });
       const t0 = Date.now();
       await plus.click();
       await screen.waitForFunction(
@@ -189,7 +247,8 @@ describe('瀏覽器實測：學生下單 → 大螢幕', () => {
     expect(Math.max(...latencies)).toBeLessThan(2000);
     await expect(boardTotal(screen, '第2組')).resolves.toBe('30萬');
     await expect(row.locator('.hold-amount').innerText()).resolves.toContain('30');
-    await expect(phone.locator('.wallet-value').innerText()).resolves.toContain('70');
+    // 餘額數字會滑動到新值，等它停下來
+    await expect.poll(() => phone.locator('.wallet-value').innerText(), { timeout: 2000 }).toContain('70');
 
     // 超過單組上限：擋下並提示，金額不變
     await phone.getByRole('button', { name: '5 萬', exact: true }).click();
@@ -209,7 +268,7 @@ describe('瀏覽器實測：學生下單 → 大螢幕', () => {
     const third = phone.locator('.stock', { hasText: '第3組' });
     await third.getByRole('button', { name: /第3組 增加/ }).click();
     await expect(third.locator('.hold-amount').innerText()).resolves.toContain('5');
-    await expect(phone.locator('.wallet-value').innerText()).resolves.toContain('45');
+    await expect.poll(() => phone.locator('.wallet-value').innerText(), { timeout: 2000 }).toContain('45');
 
     // 倒數結束自動封盤，大螢幕揭曉結果，學生看到自己的報酬
     await screen.getByText('股神獎', { exact: true }).waitFor({ timeout: (DARK_SECONDS + 3) * 1000 });

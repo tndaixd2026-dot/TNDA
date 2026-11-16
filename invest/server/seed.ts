@@ -18,3 +18,31 @@ export function seedRoster(): RosterEntry[] {
     ...THU.map((name, i) => ({ name, course: 'thu' as const, group: `第${((i * 3) % 7) + 1}組` })),
   ];
 }
+
+export interface AttendanceSeed {
+  course: 'wed' | 'thu';
+  name: string;
+  week: number;
+  status: 'present' | 'late' | 'leave' | 'absent';
+}
+
+/** 假的出席紀錄（第 2～17 週），讓登入動畫的出席率看板在本機版也有東西可以跑。每個人的出席習慣不同。 */
+export function seedAttendance(): AttendanceSeed[] {
+  let s = 20260114;
+  const rand = () => {
+    s = (s * 1103515245 + 12345) & 0x7fffffff;
+    return s / 0x7fffffff;
+  };
+  const out: AttendanceSeed[] = [];
+  for (const [course, names] of [['wed', WED], ['thu', THU]] as const) {
+    names.forEach((name) => {
+      const habit = 0.55 + rand() * 0.45; // 55%～100% 的出席傾向
+      for (let week = 2; week <= 17; week++) {
+        const r = rand();
+        const status = r < habit ? (rand() < 0.12 ? 'late' : 'present') : rand() < 0.3 ? 'leave' : 'absent';
+        out.push({ course, name, week, status });
+      }
+    });
+  }
+  return out;
+}

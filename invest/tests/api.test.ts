@@ -48,10 +48,10 @@ afterAll(async () => {
 /** 每個測試從乾淨的資料開始 */
 async function reset(opts: { darkMs?: number; roster?: RosterEntry[] } = {}) {
   await db.pg.exec(`
-    truncate invest.alloc, invest.presence, invest.history, invest.roster restart identity;
+    truncate invest.alloc, invest.presence, invest.history, invest.roster, invest.attendance restart identity;
     update invest.course set phase = 'pending', opened_at = null, dark_at = null, dark_ends_at = null,
       closed_at = null, dark_history_id = null, closed_from = null, dark_left_ms = null, results = null;
-    update invest.config set active = 'wed', version = version + 1;
+    update invest.config set active = 'wed', board_visible = true, version = version + 1;
   `);
   await db.pg.query('update invest.config set dark_ms = $1 where id = 1', [opts.darkMs ?? 60_000]);
   await db.pg.query(
@@ -609,5 +609,80 @@ describe('管理員', () => {
     expect((await state()).courses.wed.groups.map((g) => g.id)).toEqual([
       '第一組', '第二組：組', '第三組：兩億五千萬Token', '第10組',
     ]);
+  });
+});
+
+describe('登入動畫：出席率行情看板', () => {
+  type Board = { course: string; weeks: number[]; rows: { name: string; group: string; series: (number | null)[]; attended: number; total: number }[] };
+  const board = () => call<Board>('invest_intro_board', {});
+  const importAtt = (entries: unknown[], apply = true) =>
+    call<{ ok: boolean; applied: boolean; records: number; unmatched: { name: string }[]; errors: string[] } & Err>(
+      'invest_admin_attendance', { pw: PW, entries, apply });
+
+  it('出席率 = (參＋遲) ÷ (參＋遲＋缺)，請假不計入；每週累計成走勢；只顯示目前場次', async () => {
+    const r = await importAtt([
+      { course: 'wed', name: '甲', week: 2, status: '參' },
+      { course: 'wed', name: '甲', week: 3, status: '缺' },
+      { course: 'wed', name: '甲', week: 4, status: '假' },
+      { course: 'wed', name: '甲', week: 5, status: '遲' },
+      { course: 'wed', name: '乙', week: 3, status: '參' },
+      { course: 'thu', name: '丁', week: 2, status: '缺' },
+    ]);
+    expect(r.applied).toBe(true);
+    expect(r.records).toBe(6);
+    const b = await board();
+    expect(b.course).toBe('wed');
+    expect(b.weeks).toEqual([2, 3, 4, 5]);
+    const jia = b.rows.find((x) => x.name === '甲')!;
+    expect(jia.series).toEqual([100, 50, 50, 66.7]);
+    expect([jia.attended, jia.total]).toEqual([2, 3]);
+    const yi = b.rows.find((x) => x.name === '乙')!;
+    expect(yi.series).toEqual([null, 100, 100, 100]);
+    // 丙沒有紀錄：列出但沒有數字；丁是週四的學生，不在週三看板上
+    expect(b.rows.find((x) => x.name === '丙')!.series).toEqual([null, null, null, null]);
+    expect(b.rows.some((x) => x.name === '丁')).toBe(false);
+
+    await call('invest_admin_set_active', { pw: PW, course: 'thu' });
+    const t = await board();
+    expect(t.course).toBe('thu');
+    expect(t.rows.find((x) => x.name === '丁')!.series).toEqual([0]);
+  });
+
+  it('名單上找不到的姓名不匯入；未紀錄略過；預覽不寫入；匯入會取代舊資料', async () => {
+    const preview = await importAtt([
+      { course: 'wed', name: '甲', week: 2, status: '參' },
+      { course: 'wed', name: '路人', week: 2, status: '參' },
+      { course: 'wed', name: '乙', week: 2, status: '未紀錄' },
+    ], false);
+    expect(preview.ok).toBe(true);
+    expect(preview.applied).toBe(false);
+    expect(preview.records).toBe(1);
+    expect(preview.unmatched.map((u) => u.name)).toEqual(['路人']);
+    expect((await board()).rows).toEqual([]);
+
+    await importAtt([{ course: 'wed', name: '甲', week: 2, status: '參' }]);
+    await importAtt([{ course: 'wed', name: '乙', week: 7, status: '缺' }]);
+    const b = await board();
+    expect(b.weeks).toEqual([7]);
+    expect(b.rows.find((x) => x.name === '甲')!.series).toEqual([null]);
+  });
+
+  it('沒有出席資料或管理員關閉看板時，不回傳任何姓名；管理功能需要密碼', async () => {
+    expect((await board()).rows).toEqual([]);
+    await importAtt([{ course: 'wed', name: '甲', week: 2, status: '參' }]);
+    expect((await board()).rows.length).toBe(3);
+
+    expect((await call<Err>('invest_admin_board', { pw: 'x', visible: false })).error).toBe('unauthorized');
+    expect((await call<Err>('invest_admin_attendance', { pw: 'x', entries: [], apply: true })).error).toBe('unauthorized');
+    await call('invest_admin_board', { pw: PW, visible: false });
+    const hidden = await board();
+    expect(hidden.rows).toEqual([]);
+    expect(JSON.stringify(hidden)).not.toContain('甲');
+    const ov = await call<AdminOverview>('invest_admin_overview', { pw: PW });
+    expect(ov.board).toEqual({ visible: false, wed: { students: 1, weeks: 1 }, thu: { students: 0, weeks: 0 } });
+
+    await call('invest_admin_board', { pw: PW, visible: true });
+    await importAtt([], true);
+    expect((await board()).rows).toEqual([]);
   });
 });
