@@ -619,7 +619,7 @@ describe('登入動畫：出席率行情看板', () => {
     call<{ ok: boolean; applied: boolean; records: number; unmatched: { name: string }[]; errors: string[] } & Err>(
       'invest_admin_attendance', { pw: PW, entries, apply });
 
-  it('出席率 = (參＋遲) ÷ (參＋遲＋缺)，請假不計入；每週累計成走勢；只顯示目前場次', async () => {
+  it('出席率 = (參＋遲) ÷ (參＋遲＋假＋缺)，請假也算未出席；每週累計成走勢；只顯示目前場次', async () => {
     const r = await importAtt([
       { course: 'wed', name: '甲', week: 2, status: '參' },
       { course: 'wed', name: '甲', week: 3, status: '缺' },
@@ -634,8 +634,8 @@ describe('登入動畫：出席率行情看板', () => {
     expect(b.course).toBe('wed');
     expect(b.weeks).toEqual([2, 3, 4, 5]);
     const jia = b.rows.find((x) => x.name === '甲')!;
-    expect(jia.series).toEqual([100, 50, 50, 66.7]);
-    expect([jia.attended, jia.total]).toEqual([2, 3]);
+    expect(jia.series).toEqual([100, 50, 33.3, 50]);
+    expect([jia.attended, jia.total]).toEqual([2, 4]);
     const yi = b.rows.find((x) => x.name === '乙')!;
     expect(yi.series).toEqual([null, 100, 100, 100]);
     // 丙沒有紀錄：列出但沒有數字；丁是週四的學生，不在週三看板上
