@@ -548,7 +548,7 @@ language sql stable set search_path = '' as $$
 $$;
 
 -- 出席率行情：目前場次每位學生「每週累計出席率」的走勢
--- 出席 = 參＋遲；應到 = 參＋遲＋缺（請假不計入）。還沒有任何應到的週次為 null。
+-- 出席 = 參＋遲；應到 = 參＋遲＋假＋缺（請假也算未出席）。還沒有任何應到的週次為 null。
 create or replace function invest.attendance_board(c text) returns jsonb
 language sql stable set search_path = '' as $$
   with w as (
@@ -564,7 +564,7 @@ language sql stable set search_path = '' as $$
   cum as (
     select g.name_key, g.week,
            sum(case when g.status in ('present', 'late') then 1 else 0 end) over (partition by g.name_key order by g.week) as att,
-           sum(case when g.status in ('present', 'late', 'absent') then 1 else 0 end) over (partition by g.name_key order by g.week) as cnt
+           sum(case when g.status in ('present', 'late', 'leave', 'absent') then 1 else 0 end) over (partition by g.name_key order by g.week) as cnt
     from grid g
   ),
   ser as (

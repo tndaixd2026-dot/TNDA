@@ -586,7 +586,7 @@ function BoardCard({
       <h3 class="sub-title">匯入出席紀錄</h3>
       <p class="muted">
         直接上傳 Notion「出勤紀錄」資料庫匯出的 CSV，或自己整理成「課堂, 姓名, 週次, 狀態」。課堂填 週三／VSAI 或 週四／跨域；狀態填 參、遲、假、缺（未紀錄會略過）。
-        出席率 = (參 + 遲) ÷ (參 + 遲 + 缺)，請假不計入。匯入會取代全部舊的出席紀錄。
+        出席率 = (參 + 遲) ÷ (參 + 遲 + 假 + 缺)，請假也算未出席。匯入會取代全部舊的出席紀錄。
       </p>
       <input type="file" accept=".csv,text/csv,text/plain" onChange={loadFile} />
       <textarea
