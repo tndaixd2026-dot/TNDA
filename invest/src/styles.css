@@ -2697,3 +2697,61 @@ html.screen-mode body {
     gap: 8px;
   }
 }
+
+/* 期末提報主題「這個殼以！」 */
+.theme-tag {
+  display: inline-flex;
+  flex-direction: column;
+  align-self: flex-start;
+  gap: 2px;
+  padding: 8px 14px 10px;
+  background: var(--tnda-black);
+  color: var(--tnda-white);
+  box-shadow: 4px 4px 0 var(--tnda-white);
+}
+.theme-tag-label {
+  font-family: var(--font-cjk);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  color: var(--tnda-orange);
+}
+.theme-tag-text {
+  font-family: var(--font-cjk);
+  font-weight: 900;
+  font-size: 26px;
+  line-height: 1.1;
+  letter-spacing: 0.04em;
+}
+.theme-tag-lg {
+  padding: 0.8rem 1.6rem 1rem;
+  margin-bottom: 1.6rem;
+  box-shadow: 0.5rem 0.5rem 0 var(--tnda-white);
+}
+.theme-tag-lg .theme-tag-label {
+  font-size: 1.1rem;
+}
+.theme-tag-lg .theme-tag-text {
+  font-size: 3.6rem;
+}
+.login-ready .theme-tag {
+  animation: pop-in 620ms var(--ease-spring) 60ms both;
+}
+.screen-pending .theme-tag {
+  animation: pop-in 700ms var(--ease-spring) both;
+}
+.intro-theme {
+  font-family: var(--font-cjk);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  color: var(--tnda-white);
+  opacity: 0.85;
+  animation: rise-in 420ms var(--ease-out) both;
+}
+.admin-theme {
+  font-family: var(--font-cjk);
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: var(--tnda-orange);
+}

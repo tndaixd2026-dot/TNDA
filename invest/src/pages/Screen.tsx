@@ -7,7 +7,7 @@ import { splitGroupLabel } from '../../shared/roster.ts';
 import { courseLabel, type CourseId, type HistoryPoint, type PublicCourse } from '../../shared/types.ts';
 import { useLive, useNow } from '../api.ts';
 import { Chart } from '../ui/Chart.tsx';
-import { Eyebrow, GroupName, Logo, PhaseBadge, QrCode, Swatch, groupIndexMap, pad2 } from '../ui/common.tsx';
+import { Eyebrow, GroupName, Logo, PhaseBadge, QrCode, Swatch, THEME, ThemeTag, groupIndexMap, pad2 } from '../ui/common.tsx';
 import { useFlip } from '../ui/motion.ts';
 import { Count, Sparkle, Ticker, Wan, WinBar } from '../ui/y2k.tsx';
 
@@ -37,7 +37,9 @@ export function Screen() {
         <div class="screen-title">
           <Logo tone={pc.phase === 'pending' ? 'black' : 'white'} size={56} />
           <span class="screen-title-text">
-            <span class="screen-kicker">Live Market · 期末提報即時投資</span>
+            <span class="screen-kicker">
+              期末提報「{THEME}」 · Live Market 即時投資
+            </span>
             <span class="screen-course">{courseLabel(course)}</span>
           </span>
         </div>
@@ -113,6 +115,7 @@ function PendingView({ pc, joinUrl, darkMs }: { pc: PublicCourse; joinUrl: strin
       <Sparkle class="deco-spark p2" size="2.4rem" color="#000" />
       <Sparkle class="deco-spark p3" size="3.2rem" color="#fff" />
       <div class="pending-main">
+        <ThemeTag size="lg" />
         <div class="pending-kicker">Standby · 等待開盤</div>
         <h1 class="pending-title">
           <span class="display">Live Market</span>

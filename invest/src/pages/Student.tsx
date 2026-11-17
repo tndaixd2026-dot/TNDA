@@ -13,7 +13,7 @@ import {
   type PublicCourse,
 } from '../../shared/types.ts';
 import { rpc, storageGet, storageSet, useLive, useNow } from '../api.ts';
-import { Card, ConnectionDot, Eyebrow, GroupName, Logo, PhaseBadge, groupIndexMap, pad2, useToast } from '../ui/common.tsx';
+import { Card, ConnectionDot, Eyebrow, GroupName, Logo, PhaseBadge, ThemeTag, groupIndexMap, pad2, useToast } from '../ui/common.tsx';
 import { Intro, shouldPlayIntro } from '../ui/Intro.tsx';
 import { Cursor, Sparkle, Wan, WinBar } from '../ui/y2k.tsx';
 
@@ -79,7 +79,8 @@ function Login({ onLogin, notice }: { onLogin: (name: string) => void; notice: s
       <div class="login-inner" inert={intro || undefined}>
       <header class="login-head">
         <Logo tone="white" size={48} />
-        <Eyebrow>Next D · 期末提報</Eyebrow>
+        <ThemeTag />
+        <Eyebrow>Next D · 期末提報即時投資</Eyebrow>
         <h1 class="login-title">
           <span class="display">Live Market</span>
           <span class="login-title-zh">

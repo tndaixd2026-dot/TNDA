@@ -15,7 +15,7 @@ import {
 import { resultsCsv } from '../../shared/csv.ts';
 import { parseAttendanceCsv } from '../../shared/attendance.ts';
 import { ApiError, rpc, storageGet, storageSet, useLive, useNow } from '../api.ts';
-import { Card, ConnectionDot, Eyebrow, Logo, PhaseBadge, useToast } from '../ui/common.tsx';
+import { Card, ConnectionDot, Eyebrow, Logo, PhaseBadge, THEME, useToast } from '../ui/common.tsx';
 
 const PW_KEY = 'invest.admin';
 
@@ -198,6 +198,7 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
         <div class="admin-brand">
           <Logo tone="white" size={36} />
           <h1>Admin · 管理員</h1>
+          <span class="admin-theme">期末提報「{THEME}」</span>
         </div>
         <nav class="admin-links">
           <a href="../" target="_blank" rel="noreferrer">
