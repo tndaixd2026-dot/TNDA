@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { splitGroupLabel } from '../../shared/roster.ts';
 import { rpc } from '../api.ts';
-import { Logo } from './common.tsx';
+import { Logo, THEME } from './common.tsx';
 import { reducedMotion } from './motion.ts';
 import { Sparkle } from './y2k.tsx';
 
@@ -225,6 +225,7 @@ export function Intro({ onDone }: { onDone: () => void }) {
           ) : (
             <div class="intro-title">
               <Sparkle size={44} color="var(--tnda-orange)" class="pop" />
+              <span class="intro-theme">期末提報「{THEME}」</span>
               <span class="display">Live Market</span>
               <span class="intro-title-zh">即時投資</span>
             </div>

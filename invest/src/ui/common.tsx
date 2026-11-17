@@ -35,6 +35,19 @@ export function Eyebrow({ children }: { children: ComponentChildren }) {
   );
 }
 
+/** 這次期末提報的主題 */
+export const THEME = '這個殼以！';
+
+/** 主題標籤：黑底方塊，上面小字「期末提報主題」，下面主題名稱 */
+export function ThemeTag({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
+  return (
+    <div class={`theme-tag theme-tag-${size}`}>
+      <span class="theme-tag-label">期末提報主題</span>
+      <span class="theme-tag-text">{THEME}</span>
+    </div>
+  );
+}
+
 /** 01、02、03：TNDA 的編號方式 */
 export function pad2(n: number): string {
   return String(n).padStart(2, '0');
