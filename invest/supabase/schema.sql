@@ -136,7 +136,7 @@ alter table invest.course add column if not exists revealed boolean not null def
 alter table invest.alloc drop constraint if exists alloc_amount_check;
 alter table invest.alloc add constraint alloc_amount_check check (amount > 0 and amount <= 1000000);
 
--- 報告時段：管理員在某組上台時按「開始報告」→ 簡報 3 分 ×2、Demo 7 分 ×1.5、業師講評 6 分 ×1.2，之後 ×1
+-- 報告時段：管理員在某組上台時按「開始報告」→ 簡報 3 分 ×1.4、Demo 7 分 ×1.2、業師講評 6 分 ×1.1，之後 ×1
 alter table invest.course add column if not exists presenting text;
 alter table invest.course add column if not exists presenting_at timestamptz;
 -- 各組最近一次開始報告的時間（組別 → 毫秒），管理員頁顯示「已報告」
@@ -320,9 +320,9 @@ $$;
 create or replace function invest.stage_weight(elapsed bigint) returns numeric
 language sql immutable set search_path = '' as $$
   select case when elapsed is null or elapsed < 0 then 1.0
-              when elapsed < 180000 then 2.0
-              when elapsed < 600000 then 1.5
-              when elapsed < 960000 then 1.2
+              when elapsed < 180000 then 1.4
+              when elapsed < 600000 then 1.2
+              when elapsed < 960000 then 1.1
               else 1.0 end
 $$;
 
@@ -358,7 +358,8 @@ begin
     v_old := 0;
   end if;
   if v_new > v_old then
-    v_elapsed := invest.present_elapsed(v_course, v_grp);
+    -- 只有學生的錢吃時段加權；業師、老師、來賓一律 ×1
+    v_elapsed := case when invest.role_of(v_key) = 'student' then invest.present_elapsed(v_course, v_grp) end;
     insert into invest.lot (course, name_key, grp, amount, weight, delay_ms)
     values (v_course, v_key, v_grp, v_new - v_old, invest.stage_weight(v_elapsed),
             case when v_elapsed is null or v_elapsed < 0 then 960000 else least(v_elapsed, 960000) end);
@@ -420,7 +421,7 @@ $$;
 
 /*
   封盤結算（與 shared/rules.ts 的 computeResults 相同，測試會逐一比對）：
-  - 每一筆投資（invest.lot）在下單當下決定時段加權 ×2／×1.5／×1.2／×1
+  - 每一筆投資（invest.lot）在下單當下決定時段加權 ×1.4／×1.2／×1.1／×1
   - 各組最終金額 = Σ（每筆金額 × 加權）− 自己組員沒花完的錢（只倒扣這一場有登入過的人）
   - 依最終金額排名（同分同名次、下一名順延）→ 倍率 ×3、×2、×1.5、其餘 ×1；最高的組即使為負數也得獎
   - 個人報酬 = Σ（每筆金額 × 加權 × 該組倍率），未花完的錢不計入；個人名次只算有投資的人

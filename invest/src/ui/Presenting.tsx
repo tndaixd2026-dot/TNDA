@@ -22,7 +22,18 @@ export function weightNow(p: PresentingNow | null, group: string): number {
   return p && p.group === group ? p.weight : 1;
 }
 
-export function PresentingBar({ pc, now, size = 'phone' }: { pc: PublicCourse; now: number; size?: 'phone' | 'screen' }) {
+export function PresentingBar({
+  pc,
+  now,
+  size = 'phone',
+  nonStudent = false,
+}: {
+  pc: PublicCourse;
+  now: number;
+  size?: 'phone' | 'screen';
+  /** 業師、老師、來賓：自己的錢一律 ×1，只顯示學生的加權 */
+  nonStudent?: boolean;
+}) {
   const p = presentingNow(pc, now);
   if (!p) return null;
   const { short, nick } = splitGroupLabel(p.group);
@@ -42,7 +53,8 @@ export function PresentingBar({ pc, now, size = 'phone' }: { pc: PublicCourse; n
       <div class="presenting-stage">
         <span class="presenting-stage-name">{p.stage ? p.stage.label : '講評結束'}</span>
         <span class="presenting-weight">
-          現在投這組 <strong>×{p.weight}</strong>
+          {nonStudent ? '學生投這組' : '現在投這組'} <strong>×{p.weight}</strong>
+          {nonStudent && <small>（業師、來賓 ×1）</small>}
         </span>
         {p.stage && (
           <span class="presenting-left">
