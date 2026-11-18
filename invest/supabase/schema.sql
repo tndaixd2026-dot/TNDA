@@ -392,13 +392,16 @@ where not exists (select 1 from invest.lot lt where lt.course = a.course and lt.
 
 -- ---------- 狀態計算 ----------
 
--- 目前各組獲得的投資總額（每筆 × 時段加權，不含倒扣）
+-- 目前各組獲得的投資總額（每筆 × 時段加權，不含倒扣；組員投給自己組的不算）
 create or replace function invest.totals(c text) returns jsonb
 language sql stable set search_path = '' as $$
   select coalesce(jsonb_object_agg(u.grp, coalesce(t.total, 0)), '{}'::jsonb)
   from unnest(invest.groups(c)) as u(grp)
   left join (
-    select lt.grp, sum(lt.amount * lt.weight) as total from invest.lot lt where lt.course = c group by lt.grp
+    select lt.grp, sum(lt.amount * lt.weight) as total from invest.lot lt
+    where lt.course = c
+      and not exists (select 1 from invest.roster r where r.course = c and r.name_key = lt.name_key and r.grp = lt.grp)
+    group by lt.grp
   ) t on t.grp = u.grp
 $$;
 
@@ -421,7 +424,8 @@ $$;
 /*
   封盤結算（與 shared/rules.ts 的 computeResults 相同，測試會逐一比對）：
   - 每一筆投資（invest.lot）在下單當下決定時段加權 ×2／×1.5／×1.2／×1
-  - 各組最終金額 = Σ（每筆金額 × 加權）− 自己組員沒花完的錢（只倒扣這一場有登入過的人）
+  - 各組最終金額 = Σ（別組的人投進來的每筆金額 × 加權）− 自己組員沒花完的錢（只倒扣這一場有登入過的人）
+  - 學生可以投自己那組：算進個人報酬（股神獎）與「已投資」，但不算進自己組的總額（一飛沖天獎）
   - 依最終金額排名（同分同名次、下一名順延）→ 倍率 ×3、×2、×1.5、其餘 ×1；最高的組即使為負數也得獎
   - 個人報酬 = Σ（每筆金額 × 加權 × 該組倍率），未花完的錢不計入；個人名次只算有投資的人
   - 報酬同分時比下注快慢（delay_ms 依金額加權平均，四捨五入到毫秒，小者在前）；仍相同才並列
@@ -439,11 +443,13 @@ language sql stable set search_path = '' as $$
     where ac.role <> 'student' and not exists (select 1 from invest.roster r where r.course = c and r.name_key = ac.name_key)
   ),
   va as (
-    select lt.name_key, lt.grp, lt.amount, lt.weight, lt.delay_ms
+    -- self：學生投給自己那組（只算股神獎，不算進組別總額）
+    select lt.name_key, lt.grp, lt.amount, lt.weight, lt.delay_ms,
+           coalesce(lt.grp = m.own, false) as self
     from invest.lot lt
     join m on m.name_key = lt.name_key
     join g on g.grp = lt.grp
-    where lt.course = c and (m.own is null or lt.grp <> m.own)
+    where lt.course = c
   ),
   inv as (
     select m.name_key, m.name, m.own, m.student,
@@ -459,7 +465,7 @@ language sql stable set search_path = '' as $$
   ),
   gr0 as (
     select g.grp, g.ord,
-           coalesce((select sum(va.amount * va.weight) from va where va.grp = g.grp), 0) as raw,
+           coalesce((select sum(va.amount * va.weight) from va where va.grp = g.grp and not va.self), 0) as raw,
            coalesce((select sum(ded.unspent) from ded where ded.grp = g.grp), 0) as penalty
     from g
   ),
@@ -1129,7 +1135,6 @@ begin
   if v_grp is null or not (v_grp = any (invest.groups(v_course))) then
     return invest.err('unknown_group', '沒有這個組別');
   end if;
-  if v_own is not null and v_grp = v_own then return invest.err('own_group', '不能投資自己那組'); end if;
   if v_amount is null or v_amount < 0 or v_amount <> trunc(v_amount) then
     return invest.err('bad_amount', '金額必須是 0 以上的整數');
   end if;

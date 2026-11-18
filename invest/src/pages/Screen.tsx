@@ -143,7 +143,7 @@ function ScreenTicker({ pc }: { pc: PublicCourse }) {
   } else if (pc.phase === 'dark') {
     items = ['Dark Mode', '暗盤中', '金額與排名已隱藏', '倒數結束自動封盤', '還沒投完的同學快調整', ...PAYOUT_TICKER];
   } else {
-    items = ['Live Market', '掃 QR code 加入', '每人 100 萬虛擬資金', '只能投別組', '有信心可以 all in', ...PAYOUT_TICKER, '等待開盤'];
+    items = ['Live Market', '掃 QR code 加入', '每人 100 萬虛擬資金', '有信心可以 all in', '投自己組只算股神獎', ...PAYOUT_TICKER, '等待開盤'];
   }
   return <Ticker items={items} class={`screen-ticker ticker-${pc.phase}`} />;
 }
@@ -180,8 +180,8 @@ function PendingView({ pc, joinUrl, darkMs }: { pc: PublicCourse; joinUrl: strin
         <div class="pending-info">
         <ol class="pending-rules">
           {[
-            '每人 100 萬虛擬資金，只能投別組',
-            '沒有單組上限，有信心可以 all in',
+            '每人 100 萬虛擬資金，有信心可以 all in',
+            '也可以投自己組：只算股神獎，不算一飛沖天',
             '沒投完的錢，封盤時從自己那組倒扣',
             `最後 ${dark}暗盤：金額與排名隱藏`,
           ].map((t, i) => (

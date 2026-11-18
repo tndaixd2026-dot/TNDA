@@ -771,7 +771,6 @@ small {
 }
 .stock-own {
   background: var(--ink-100);
-  border-color: var(--ink-300);
 }
 .stock-head {
   display: flex;
@@ -810,9 +809,9 @@ small {
   font-weight: 700;
 }
 .stock-own-note {
-  margin-top: 8px;
+  margin: 8px 0 4px;
   color: var(--ink-500);
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   font-weight: 600;
 }
 .stock-trade {
