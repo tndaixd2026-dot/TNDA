@@ -4110,3 +4110,31 @@ html.screen-mode body {
 .mini-table .group-nick {
   font-size: 0.8em;
 }
+/* 暗盤大螢幕：倍率表精簡一點，QR code 不會壓到跑馬燈 */
+.screen-dark .dark-countdown {
+  font-size: 9.5rem;
+}
+.screen-dark .payout-screen {
+  padding: 0.8rem 1rem;
+}
+.screen-dark .payout-screen .payout-head {
+  margin-bottom: 0.5rem;
+}
+.screen-dark .payout-screen .payout-head-2 {
+  margin-top: 0.7rem;
+}
+.screen-dark .payout-screen .payout-title {
+  font-size: 1.5rem;
+}
+.screen-dark .payout-screen .payout-sub {
+  display: none;
+}
+.screen-dark .payout-screen .payout-tier {
+  padding: 0.35rem 0.3rem;
+}
+.screen-dark .payout-screen .payout-rank {
+  font-size: 1.1rem;
+}
+.screen-dark .payout-screen .payout-mult {
+  font-size: 2.1rem;
+}
