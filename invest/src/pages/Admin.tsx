@@ -14,7 +14,7 @@ import {
 } from '../../shared/types.ts';
 import { resultsCsv } from '../../shared/csv.ts';
 import { parseAttendanceCsv } from '../../shared/attendance.ts';
-import { AccountsCard, GroupsCard, SlidesCard, StageCard } from './AdminEvent.tsx';
+import { AccountsCard, GroupsCard, PresentCard, SlidesCard, StageCard } from './AdminEvent.tsx';
 import { ApiError, rpc, storageGet, storageSet, useLive, useNow } from '../api.ts';
 import { Card, ConnectionDot, Eyebrow, Logo, PhaseBadge, THEME, useToast } from '../ui/common.tsx';
 
@@ -265,6 +265,8 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
           </div>
         )}
       </Card>
+
+      <PresentCard pc={pc} now={now} act={act} busy={busy} />
 
       <Card>
         <h2 class="card-title">

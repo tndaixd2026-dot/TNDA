@@ -8,7 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../server/app.ts';
 import { openDb, type Db } from '../server/db.ts';
 import { BUDGET, computeResults } from '../shared/rules.ts';
-import type { AdminOverview, HistoryPoint, MeState, PublicState, Results, RosterEntry } from '../shared/types.ts';
+import type { AdminOverview, HistoryPoint, Lot, MeState, PublicState, Results, RosterEntry } from '../shared/types.ts';
 
 const W = 10_000;
 const STUDENT_PW = '0101';
@@ -51,14 +51,15 @@ afterAll(async () => {
 /** 每個測試從乾淨的資料開始 */
 async function reset(opts: { darkMs?: number; roster?: RosterEntry[] } = {}) {
   await db.pg.exec(`
-    truncate invest.alloc, invest.presence, invest.history, invest.roster, invest.attendance, invest.session restart identity;
+    truncate invest.alloc, invest.lot, invest.presence, invest.history, invest.roster, invest.attendance, invest.session restart identity;
     delete from invest.account a where a.role <> 'guest';
     truncate invest.group_info;
     truncate invest.slide restart identity;
     insert into invest.slide (pos, kind, title, subtitle, body) values
       (1, 'title', '業師總結', '期末提報「這個殼以！」', ''), (2, 'recap', '數字回顧', '', ''), (3, 'text', '謝謝大家', 'TNDA · Next D', '');
     update invest.course set phase = 'pending', opened_at = null, dark_at = null, dark_ends_at = null,
-      closed_at = null, dark_history_id = null, closed_from = null, dark_left_ms = null, results = null, revealed = false;
+      closed_at = null, dark_history_id = null, closed_from = null, dark_left_ms = null, results = null, revealed = false,
+      presenting = null, presenting_at = null, presented = '{}'::jsonb;
     update invest.config set active = 'wed', board_visible = true, stage_mode = 'market', stage_step = 0, version = version + 1;
   `);
   await db.pg.query('update invest.config set dark_ms = $1 where id = 1', [opts.darkMs ?? 60_000]);
@@ -115,6 +116,27 @@ const phase = (course: string, action: string, at = base) =>
 const adminResults = (course: string) => call<Results>('invest_admin_results', { pw: PW, course });
 const history = () => call<Record<string, HistoryPoint[]>>('invest_history', {});
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const present = (course: string, grp: string | null) => call<AdminOverview & Err>('invest_admin_present', { pw: PW, course, grp });
+/** 測試用：讓某組「已經開始報告 elapsedMs 毫秒」（null = 沒有組在報告） */
+async function presentAt(grp: string | null, elapsedMs: number, course = 'wed') {
+  await db.pg.query(
+    `update invest.course set presenting = $2::text,
+       presenting_at = case when $2::text is null then null else now() - make_interval(secs => $3::double precision / 1000) end
+     where course = $1`,
+    [course, grp, elapsedMs],
+  );
+}
+/** 資料庫裡每個人的每一筆投資（給 TypeScript 參考實作比對） */
+async function lotsByName(course = 'wed'): Promise<Record<string, Lot[]>> {
+  const { rows } = await db.pg.query<{ name: string; grp: string; amount: string; weight: string; delay_ms: string }>(
+    `select r.name, l.grp, l.amount, l.weight, l.delay_ms from invest.lot l
+     join invest.roster r on r.course = l.course and r.name_key = l.name_key where l.course = $1 order by l.id`,
+    [course],
+  );
+  const out: Record<string, Lot[]> = {};
+  for (const r of rows) (out[r.name] ??= []).push({ group: r.grp, amount: Number(r.amount), weight: Number(r.weight), delayMs: Number(r.delay_ms) });
+  return out;
+}
 
 describe('登入與名單', () => {
   it('只認名單上的姓名（去空白、全形半形），回傳兩堂課各自的組別與錢包', async () => {
@@ -136,13 +158,15 @@ describe('投資規則（全部在資料庫端驗證）', () => {
     expect((await me('甲')).courses.wed?.alloc).toEqual({});
   });
 
-  it('單一組上限 50 萬（剛好 50 萬可以，多 1 元就擋下），金額必須是非負整數、最小 1 元', async () => {
+  it('沒有單一組上限：可以 all in 100 萬，超過 100 萬才擋；金額必須是非負整數、最小 1 元', async () => {
     await phase('wed', 'open');
-    expect((await invest('甲', '第2組', 50 * W + 1)).error).toBe('over_limit');
-    expect((await invest('甲', '第2組', 50 * W)).error).toBeUndefined();
-    expect((await invest('甲', '第2組', 60 * W)).error).toBe('over_limit');
+    expect((await invest('甲', '第2組', 60 * W)).error).toBeUndefined();
+    expect((await invest('甲', '第2組', BUDGET)).error).toBeUndefined();
+    expect((await invest('甲', '第2組', BUDGET + 1)).error).toBe('over_budget');
     expect((await invest('甲', '第2組', -1)).error).toBe('bad_amount');
     expect((await invest('甲', '第2組', 1.5)).error).toBe('bad_amount');
+    expect((await invest('甲', '第3組', 1)).error).toBe('over_budget');
+    expect((await invest('甲', '第2組', 50 * W)).courses.wed?.alloc).toEqual({ 第2組: 50 * W });
     expect((await invest('甲', '第3組', 1)).courses.wed?.alloc).toEqual({ 第2組: 50 * W, 第3組: 1 });
   });
 
@@ -189,14 +213,14 @@ describe('投資規則（全部在資料庫端驗證）', () => {
 
   it('同時大量下單也不會超過餘額（資料庫逐筆鎖定）', async () => {
     await phase('wed', 'open');
-    // 甲同時對兩組各送 10 筆 50 萬：最後兩組都是 50 萬、總共不超過 100 萬
-    const reqs = Array.from({ length: 20 }, (_, i) => invest('甲', i % 2 ? '第2組' : '第3組', 50 * W));
+    // 甲同時對兩組各送 10 筆 60 萬：只有其中一組成功、總共不超過 100 萬
+    const reqs = Array.from({ length: 20 }, (_, i) => invest('甲', i % 2 ? '第2組' : '第3組', 60 * W));
     await Promise.all(reqs);
     const m = await me('甲');
-    expect(m.courses.wed?.invested).toBe(100 * W);
+    expect(m.courses.wed?.invested).toBe(60 * W);
     // 再同時送 10 筆超額的，全部被擋
-    const over = await Promise.all(Array.from({ length: 10 }, () => invest('乙', '第1組', 50 * W + 1)));
-    expect(over.every((r) => r.error === 'over_limit')).toBe(true);
+    const over = await Promise.all(Array.from({ length: 10 }, () => invest('乙', '第1組', BUDGET + 1)));
+    expect(over.every((r) => r.error === 'over_budget')).toBe(true);
   });
 
   it('重疊學生上下半場錢包獨立：各 100 萬，互不相通', async () => {
@@ -376,15 +400,23 @@ describe('封盤結算', () => {
           // 金額有整萬、也有零碎到 1 元的
           const amount = Math.min(left, rand() < 0.5 ? Math.floor(rand() * 6) * 10 * W : Math.floor(rand() * 50 * W));
           if (amount === 0) continue;
+          // 隨機讓某組在報告中（不同時段 ×2／×1.5／×1.2／×1）
+          await presentAt(rand() < 0.6 ? g : null, Math.floor(rand() * 20 * 60_000));
           const r = await invest(m.name, g, amount);
           expect(r.error).toBeUndefined();
-          (allocs[m.name] ??= {})[g] = amount;
           left -= amount;
+          // 有時候再調低（先扣最晚投的）或追加
+          if (rand() < 0.3) {
+            await presentAt(rand() < 0.6 ? g : null, Math.floor(rand() * 20 * 60_000));
+            const next = rand() < 0.5 ? Math.floor(amount / 3) : Math.min(amount + left, amount + Math.floor(rand() * 20 * W));
+            expect((await invest(m.name, g, next)).error).toBeUndefined();
+            left -= next - amount;
+          }
         }
       }
       await phase('wed', 'close');
       const sql = await adminResults('wed');
-      const ts = computeResults(groups, members, allocs, (n) => present.has(n));
+      const ts = computeResults(groups, members, allocs, (n) => present.has(n), await lotsByName());
       const norm = (r: Results) => ({
         groups: r.groups.map((g) => ({ ...g, deductions: [...g.deductions].sort((a, b) => a.name.localeCompare(b.name)) })),
         investors: [...r.investors].sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name)),
@@ -394,6 +426,120 @@ describe('封盤結算', () => {
       expect(norm(sql)).toEqual(norm(ts));
     }
   }, 60_000);
+});
+
+describe('登入身分', () => {
+  it('只修其中一堂課的學生，姓名也正確顯示（不會被另一堂課的查詢清空）', async () => {
+    expect((await me('乙')).name).toBe('乙');
+    expect((await me('丁')).name).toBe('丁');
+    expect((await me('甲')).name).toBe('甲');
+  });
+});
+
+describe('報告時段加權', () => {
+  const MIN = 60_000;
+  const totals = async () => Object.fromEntries((await state()).courses.wed.groups.map((g) => [g.id, g.total]));
+
+  it('按「開始報告」後投給報告中的組：簡報 ×2、Demo ×1.5、講評 ×1.2、之後 ×1；別組 ×1', async () => {
+    expect((await present('wed', '第2組')).error).toBeUndefined();
+    const pub = (await state()).courses.wed;
+    expect(pub.presenting?.group).toBe('第2組');
+    expect(pub.presented['第2組']).toBeGreaterThan(0);
+    await phase('wed', 'open');
+    // 簡報中（剛開始）
+    await invest('甲', '第2組', 10 * W);
+    expect((await totals())['第2組']).toBe(20 * W);
+    // 同時投給沒在報告的第3組 ×1
+    await invest('甲', '第3組', 10 * W);
+    expect((await totals())['第3組']).toBe(10 * W);
+    // Demo（4 分鐘）、講評（12 分鐘）、結束後（17 分鐘）
+    await presentAt('第2組', 4 * MIN);
+    await invest('甲', '第2組', 20 * W); // +10 萬 ×1.5
+    await presentAt('第2組', 12 * MIN);
+    await invest('甲', '第2組', 30 * W); // +10 萬 ×1.2
+    await presentAt('第2組', 17 * MIN);
+    await invest('甲', '第2組', 40 * W); // +10 萬 ×1
+    expect((await totals())['第2組']).toBe((20 + 15 + 12 + 10) * W);
+    const mine = (await me('甲')).courses.wed!;
+    expect(mine.alloc).toEqual({ 第2組: 40 * W, 第3組: 10 * W });
+    expect(mine.weighted).toEqual({ 第2組: 57 * W, 第3組: 10 * W });
+    expect(mine.invested).toBe(50 * W);
+  });
+
+  it('撤回或調低時先扣最晚投的（早投的高加權保留）；撤光再投用新的時段', async () => {
+    await phase('wed', 'open');
+    await present('wed', '第2組');
+    await invest('甲', '第2組', 30 * W); // ×2
+    await presentAt('第2組', 17 * MIN);
+    await invest('甲', '第2組', 50 * W); // +20 萬 ×1
+    await invest('甲', '第2組', 20 * W); // 扣 30 萬：先扣 ×1 的 20 萬，再扣 ×2 的 10 萬
+    expect((await totals())['第2組']).toBe(40 * W);
+    await invest('甲', '第2組', 0);
+    expect((await totals())['第2組']).toBe(0);
+    expect((await lotsByName())['甲']).toBeUndefined();
+    await present('wed', '第2組');
+    await invest('甲', '第2組', 10 * W);
+    expect((await totals())['第2組']).toBe(20 * W);
+  });
+
+  it('換下一組上台，上一組的加權時段立即結束；停止計時後全部 ×1', async () => {
+    await phase('wed', 'open');
+    await present('wed', '第2組');
+    await present('wed', '第3組');
+    await invest('甲', '第2組', 10 * W);
+    await invest('甲', '第3組', 10 * W);
+    expect(await totals()).toMatchObject({ 第2組: 10 * W, 第3組: 20 * W });
+    const pub = (await state()).courses.wed;
+    expect(Object.keys(pub.presented).sort()).toEqual(['第2組', '第3組']);
+    await present('wed', null);
+    expect((await state()).courses.wed.presenting).toBeNull();
+    await invest('甲', '第3組', 20 * W);
+    expect((await totals())['第3組']).toBe(30 * W);
+  });
+
+  it('加權算進一飛沖天與股神；報酬同分時比下注快慢，快的人拿股神獎', async () => {
+    await reset({ roster: [
+      { name: '快', course: 'wed', group: 'A' },
+      { name: '慢', course: 'wed', group: 'A' },
+      { name: '乙', course: 'wed', group: 'B' },
+      { name: '丙', course: 'wed', group: 'C' },
+    ] });
+    await phase('wed', 'open');
+    await presentAt('B', 20_000);
+    await invest('快', 'B', BUDGET); // all in，簡報 20 秒時 ×2
+    await presentAt('B', 100_000);
+    await invest('慢', 'B', BUDGET); // 簡報 100 秒時，也是 ×2
+    await presentAt('C', 5 * MIN);
+    await invest('乙', 'C', BUDGET); // Demo ×1.5
+    await invest('丙', 'B', BUDGET); // B 沒在報告 ×1
+    await phase('wed', 'close');
+    const r = await adminResults('wed');
+    expect(r.groups.map((g) => [g.group, g.raw, g.rank])).toEqual([['B', 500 * W, 1], ['C', 150 * W, 2], ['A', 0, 3]]);
+    const byName = Object.fromEntries(r.investors.map((i) => [i.name, i]));
+    expect(byName.快.payout).toBe(600 * W);
+    expect(byName.慢.payout).toBe(600 * W);
+    expect(byName.快.delayMs).toBeLessThan(byName.慢.delayMs);
+    // 乙：C 第 2 名 150 萬×2 = 300 萬；丙：B 第 1 名 100 萬×3 = 300 萬 → 同分，乙在 Demo 時下單比較快
+    expect(byName.乙.payout).toBe(300 * W);
+    expect(byName.丙.payout).toBe(300 * W);
+    expect([byName.快.rank, byName.慢.rank, byName.乙.rank, byName.丙.rank]).toEqual([1, 2, 3, 4]);
+    expect(r.stockGods).toEqual(['快']);
+    expect(byName.丙.delayMs).toBe(16 * MIN);
+  });
+
+  it('開始報告需要管理員密碼；不存在的組、已封盤都擋下；重置會清除', async () => {
+    expect((await call<Err>('invest_admin_present', { pw: 'x', course: 'wed', grp: '第2組' })).error).toBe('unauthorized');
+    expect((await present('wed', '第9組')).error).toBe('unknown_group');
+    await present('wed', '第2組');
+    await phase('wed', 'open');
+    await phase('wed', 'close');
+    expect((await present('wed', '第3組')).error).toBe('bad_phase');
+    expect((await state()).courses.wed.presenting).toBeNull();
+    await call('invest_admin_reset', { pw: PW, course: 'wed' });
+    const pub = (await state()).courses.wed;
+    expect(pub.presenting).toBeNull();
+    expect(pub.presented).toEqual({});
+  });
 });
 
 describe('暗盤', () => {
@@ -782,7 +928,7 @@ describe('帳號與密碼', () => {
     const inv = (t: string, grp: string, amount: number, course = 'wed') =>
       call<MeState & Err>('invest_invest', { token: t, course, grp, amount });
     expect((await inv(mentor.token, '第1組', 50 * W)).error).toBeUndefined();
-    expect((await inv(mentor.token, '第1組', 60 * W)).error).toBe('over_limit');
+    expect((await inv(mentor.token, '第1組', BUDGET + 1)).error).toBe('over_budget');
     expect((await inv(guest.token, '第3組', 40 * W)).error).toBeUndefined();
     await invest('甲', '第2組', 50 * W);
     await invest('甲', '第3組', 50 * W);

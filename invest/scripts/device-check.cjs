@@ -85,6 +85,9 @@ function audit() {
   await admin('invest_admin_reset', { course: 'wed' });
   await admin('invest_admin_stage', { action: 'market' });
   await admin('invest_admin_phase', { course: 'wed', action: 'open' });
+  // 讓第 2 組在報告中（簡報 ×2），檢查「報告中」橫條與加權標示的版面
+  const g2 = [...new Set(roster.map((r) => r.group))].sort()[1];
+  await admin('invest_admin_present', { course: 'wed', grp: g2 });
 
   let n = 0;
   for (const [name, dev] of DEVICES) {
@@ -122,15 +125,15 @@ function audit() {
     await stocks.nth(0).locator('.hold-amount').click();
     await page.evaluate(() => scrollTo(0, 0));
     await snap('market', true);
-    // 超過上限：提示直接顯示在輸入框下方（手機鍵盤打開時也看得到）
-    await stocks.nth(0).locator('.amount-editor input').fill('60');
+    // 超過餘額：提示直接顯示在輸入框下方（手機鍵盤打開時也看得到）
+    await stocks.nth(0).locator('.amount-editor input').fill('200');
     await stocks.nth(0).getByRole('button', { name: '確定' }).click();
     await stocks.nth(0).locator('.amount-editor .form-error').waitFor();
     await snap('toast');
-    // 按「＋」超過上限的提示（畫面底部）
+    // 按「＋」超過餘額的提示（畫面底部）
     await stocks.nth(0).getByRole('button', { name: '取消' }).click();
     await page.getByRole('button', { name: '10 萬', exact: true }).click();
-    for (let i = 0; i < 5; i++) await stocks.nth(0).getByRole('button', { name: /增加/ }).click();
+    for (let i = 0; i < 11; i++) await stocks.nth(0).getByRole('button', { name: /增加/ }).click();
     await page.locator('.toast').waitFor();
     await snap('toast2');
     report.push({ name, viewport: dev.viewport, student: '(假名單)', states, errors });

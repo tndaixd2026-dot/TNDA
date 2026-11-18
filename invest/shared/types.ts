@@ -28,6 +28,16 @@ export interface RosterEntry {
 /** 某位學生在某堂課的投資：組別 → 金額（元）。金額為 0 的組不會出現。 */
 export type Allocation = Record<string, number>;
 
+/** 一筆投資（下單時決定時段加權）。撤回時先扣最晚的。 */
+export interface Lot {
+  group: string;
+  amount: number;
+  /** 下單當下的時段加權：2、1.5、1.2 或 1 */
+  weight: number;
+  /** 從該組開始報告到下單的毫秒數（同分比快慢用；報告時段以外 = 16 分鐘） */
+  delayMs: number;
+}
+
 export interface HistoryPoint {
   /** 資料庫裡的流水號（增量更新用） */
   id?: number;
@@ -39,7 +49,7 @@ export interface HistoryPoint {
 
 export interface GroupResult {
   group: string;
-  /** 大家投進來的總額 */
+  /** 大家投進來的總額（每筆 × 時段加權） */
   raw: number;
   /** 組員沒花完、要倒扣的總額 */
   penalty: number;
@@ -61,6 +71,8 @@ export interface InvestorResult {
   invested: number;
   unspent: number;
   payout: number;
+  /** 下注快慢：從各組開始報告到下單的時間（依金額加權平均，毫秒）；同分時小者勝 */
+  delayMs: number;
   rank: number;
 }
 
@@ -124,6 +136,10 @@ export interface PublicCourse {
   closedAt: number | null;
   /** 封盤後，頒獎已揭曉這一場第一名（之後各組金額、結果才公開） */
   revealed: boolean;
+  /** 正在報告的組與開始時間（時段加權用）；沒有組在報告、或已封盤時為 null */
+  presenting: { group: string; startedAt: number } | null;
+  /** 各組最近一次開始報告的時間（組別 → 毫秒） */
+  presented: Record<string, number>;
   /** 依組別順序（第 1 組、第 2 組…） */
   groups: PublicGroup[];
   students: number;
@@ -188,6 +204,8 @@ export interface MyCourse {
   /** 學生自己的組；業師、老師、訪客沒有組（null） */
   group: string | null;
   alloc: Allocation;
+  /** 各組的加權後金額（每筆 × 下單當下的時段加權） */
+  weighted: Record<string, number>;
   invested: number;
   remaining: number;
   /** 封盤後：有投資才有個人名次（分母只算有投資的人） */

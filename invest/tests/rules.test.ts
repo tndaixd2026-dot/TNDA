@@ -4,7 +4,10 @@ import {
   checkInvest,
   competitionRanks,
   computeResults,
+  delayFor,
   multiplierForRank,
+  PRESENT_WINDOW_MS,
+  stageAt,
   toPublicResults,
   type InvestCheck,
 } from '../shared/rules.ts';
@@ -51,8 +54,10 @@ describe('checkInvest', () => {
     expect(checkInvest({ ...base, group: 'Z' })).toBe('unknown_group');
   });
 
-  it('單一組上限 50 萬', () => {
-    expect(checkInvest({ ...base, amount: 50 * W + 1 })).toBe('over_limit');
+  it('沒有單一組上限：可以把 100 萬全部投給同一組（all in），超過 100 萬才擋', () => {
+    expect(checkInvest({ ...base, amount: 50 * W + 1 })).toBeNull();
+    expect(checkInvest({ ...base, amount: BUDGET })).toBeNull();
+    expect(checkInvest({ ...base, amount: BUDGET + 1 })).toBe('over_budget');
   });
 
   it('金額必須是非負整數', () => {
@@ -269,6 +274,68 @@ describe('computeResults', () => {
     expect(a.raw).toBe(0);
     expect(a.penalty).toBe(50 * W);
     expect(r.investors[0].payout).toBe(50 * W * 3);
+  });
+});
+
+describe('報告時段加權', () => {
+  const MIN = 60_000;
+  it('開始報告後：簡報 3 分 ×2 → Demo 7 分 ×1.5 → 業師講評 6 分 ×1.2 → 之後 ×1', () => {
+    expect(stageAt(0)).toMatchObject({ weight: 2, leftMs: 3 * MIN });
+    expect(stageAt(3 * MIN - 1).stage?.key).toBe('pitch');
+    expect(stageAt(3 * MIN)).toMatchObject({ weight: 1.5, leftMs: 7 * MIN });
+    expect(stageAt(10 * MIN - 1).weight).toBe(1.5);
+    expect(stageAt(10 * MIN)).toMatchObject({ weight: 1.2, leftMs: 6 * MIN });
+    expect(stageAt(16 * MIN)).toMatchObject({ stage: null, weight: 1, leftMs: 0 });
+    expect(stageAt(-5).weight).toBe(1);
+    expect(PRESENT_WINDOW_MS).toBe(16 * MIN);
+  });
+
+  it('同分比快慢用的下注時間：報告時段以外一律算 16 分鐘', () => {
+    expect(delayFor(1234)).toBe(1234);
+    expect(delayFor(null)).toBe(16 * MIN);
+    expect(delayFor(99 * MIN)).toBe(16 * MIN);
+  });
+
+  it('各組最終金額與個人報酬都用「每筆金額 × 下單當下的加權」', () => {
+    const members = [
+      { name: '甲', group: 'C' },
+      { name: '乙', group: 'C' },
+    ];
+    const lots = {
+      // 甲：A 簡報時 30 萬（×2）＋ Demo 時 20 萬（×1.5）、B 別組報告時 50 萬（×1）
+      甲: [
+        { group: 'A', amount: 30 * W, weight: 2, delayMs: 60_000 },
+        { group: 'A', amount: 20 * W, weight: 1.5, delayMs: 5 * MIN },
+        { group: 'B', amount: 50 * W, weight: 1, delayMs: 16 * MIN },
+      ],
+      // 乙：all in B，在 B 講評時（×1.2）
+      乙: [{ group: 'B', amount: BUDGET, weight: 1.2, delayMs: 12 * MIN }],
+    };
+    const r = computeResults(['A', 'B', 'C'], members, {}, () => true, lots);
+    const g = Object.fromEntries(r.groups.map((x) => [x.group, x]));
+    expect(g.A.raw).toBe(90 * W); // 30×2 + 20×1.5
+    expect(g.B.raw).toBe(170 * W); // 50×1 + 100×1.2
+    expect(g.B.rank).toBe(1);
+    expect(g.A.rank).toBe(2);
+    const p = Object.fromEntries(r.investors.map((x) => [x.name, x]));
+    expect(p.甲.invested).toBe(BUDGET);
+    expect(p.甲.payout).toBe(90 * W * 2 + 50 * W * 3); // A 第 2 名 ×2、B 第 1 名 ×3
+    expect(p.乙.payout).toBe(120 * W * 3);
+    expect(p.甲.delayMs).toBe(Math.round((30 * W * 60_000 + 20 * W * 5 * MIN + 50 * W * 16 * MIN) / BUDGET));
+  });
+
+  it('報酬同分時比下注快慢：越快越前面；快慢也一樣才並列', () => {
+    const members = ['快', '慢', '同', 'X'].map((name) => ({ name, group: name === 'X' ? 'B' : 'C' }));
+    const lot = (delayMs: number) => [{ group: 'A', amount: BUDGET, weight: 2, delayMs }];
+    const r = computeResults(['A', 'B', 'C'], members, {}, () => true, {
+      快: lot(20_000),
+      慢: lot(90_000),
+      同: lot(20_000),
+      X: [{ group: 'A', amount: 1, weight: 1, delayMs: 0 }],
+    });
+    const rank = Object.fromEntries(r.investors.map((x) => [x.name, x.rank]));
+    expect(rank).toMatchObject({ 快: 1, 同: 1, 慢: 3 });
+    expect(r.stockGods).toEqual(['同', '快'].sort((a, b) => a.localeCompare(b, 'zh-Hant')));
   });
 });
 

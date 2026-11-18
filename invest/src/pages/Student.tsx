@@ -1,6 +1,6 @@
 // 學生端：輸入姓名登入，像買賣股票一樣把 100 萬分配給其他組。
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { BUDGET, MAX_PER_GROUP, multiplierForRank } from '../../shared/rules.ts';
+import { BUDGET, multiplierForRank } from '../../shared/rules.ts';
 import { countdown, parseWanInput, wan, yuanText } from '../../shared/format.ts';
 import { splitGroupLabel } from '../../shared/roster.ts';
 import {
@@ -18,6 +18,7 @@ import { rpc, storageGet, storageSet, useLive, useNow } from '../api.ts';
 import { Card, ConnectionDot, Eyebrow, GroupName, Logo, PhaseBadge, ThemeTag, groupIndexMap, pad2, useToast } from '../ui/common.tsx';
 import { Intro, shouldPlayIntro } from '../ui/Intro.tsx';
 import { PayoutTable } from '../ui/Payout.tsx';
+import { PresentingBar, presentingNow, weightNow } from '../ui/Presenting.tsx';
 import { Cursor, Sparkle, Wan, WinBar } from '../ui/y2k.tsx';
 
 // 登入後的憑證（不是密碼）；舊版只存姓名的紀錄會被清掉
@@ -139,9 +140,10 @@ function Login({ onLogin, notice }: { onLogin: (token: string) => void; notice: 
       <ol class="rules">
         {[
           '每堂課各有 100 萬，只能投給同堂課的其他組',
-          '單一組最多 50 萬，所以至少要投兩組',
+          '沒有單組上限：很有信心可以 all in 100 萬',
           '封盤時沒投完的錢，會從你們組的總額倒扣',
           '最後 5 分鐘是暗盤：看不到各組金額，但還能調整',
+          '某組上台報告時投給它有加權：簡報 ×2、Demo ×1.5、講評 ×1.2',
         ].map((t, i) => (
           <li key={t}>
             <span class="rule-num">{pad2(i + 1)}</span>
@@ -307,18 +309,12 @@ function CourseMarket(p: CourseMarketProps) {
   const canTrade = pc.phase === 'open' || (pc.phase === 'dark' && darkLeft > 0);
   // 業師、老師、來賓沒有自己的組
   const own = mine.group ? splitGroupLabel(mine.group).short : null;
+  const live = presentingNow(pc, now);
 
   function change(group: string, delta: number) {
     const cur = alloc[group] ?? 0;
     if (delta > 0) {
-      // 規格：超過 50 萬上限或餘額不足時擋下並提示（伺服器也會再驗證一次）
-      if (cur + delta > MAX_PER_GROUP) {
-        p.notify(
-          cur >= MAX_PER_GROUP ? '這組已達單組上限 50 萬' : `超過單組上限 50 萬，這組最多還能加 ${wan(MAX_PER_GROUP - cur)} 萬`,
-          'error',
-        );
-        return;
-      }
+      // 規格：餘額不足時擋下並提示（伺服器也會再驗證一次）
       if (delta > remaining) {
         p.notify(remaining > 0 ? `餘額不足，只剩 ${wan(remaining)} 萬` : '餘額不足，先從別組撤回一些', 'error');
         return;
@@ -333,8 +329,7 @@ function CourseMarket(p: CourseMarketProps) {
   /** 直接輸入金額：成功回傳 null，失敗回傳說明（顯示在輸入框下方，手機鍵盤打開時也看得到） */
   function setExact(group: string, amount: number): string | null {
     const cur = alloc[group] ?? 0;
-    if (amount > MAX_PER_GROUP) return '單一組最多只能投 50 萬';
-    if (amount - cur > remaining) return `餘額不足，這組最多可以投到 ${wan(Math.min(MAX_PER_GROUP, cur + remaining))} 萬`;
+    if (amount - cur > remaining) return `餘額不足，這組最多可以投到 ${wan(cur + remaining)} 萬`;
     if (amount !== cur) p.submit(p.course, group, amount);
     return null;
   }
@@ -378,6 +373,7 @@ function CourseMarket(p: CourseMarketProps) {
         </div>
       </Card>
 
+      <PresentingBar pc={pc} now={now} />
       {pc.phase === 'pending' && <div class="banner banner-info">還沒開盤，老師開盤後就能下單。</div>}
       {pc.phase === 'dark' && (
         <div class="banner banner-dark">
@@ -411,8 +407,16 @@ function CourseMarket(p: CourseMarketProps) {
           const cur = alloc[g.id] ?? 0;
           const short = splitGroupLabel(g.id).short;
           const result = pc.results?.groups.find((r) => r.group === g.id);
+          const boost = isOwn ? 1 : weightNow(live, g.id);
+          // 加權後金額（伺服器算好的；送出中還沒回來時先不顯示）
+          const weighted = (mine.alloc[g.id] ?? 0) === cur ? (mine.weighted?.[g.id] ?? cur) : null;
           return (
-            <li key={g.id} class={`stock${isOwn ? ' stock-own' : ''}`}>
+            <li key={g.id} class={`stock${isOwn ? ' stock-own' : ''}${boost > 1 && canTrade ? ' stock-boost' : ''}`}>
+              {boost > 1 && canTrade && (
+                <div class="stock-boost-tag">
+                  報告中 · 現在投這組 <strong>×{boost}</strong>
+                </div>
+              )}
               <div class="stock-head">
                 <GroupName id={g.id} index={i} />
                 <div class="stock-quote">
@@ -477,10 +481,15 @@ function CourseMarket(p: CourseMarketProps) {
                   </button>
                 </div>
               )}
+              {!isOwn && cur > 0 && weighted !== null && weighted !== cur && (
+                <div class="stock-weighted">
+                  時段加權後 <strong>{wan(weighted)} 萬</strong>
+                </div>
+              )}
               {!isOwn && canTrade && p.editing === g.id && (
                 <AmountEditor
                   initial={cur}
-                  max={Math.min(MAX_PER_GROUP, cur + remaining)}
+                  max={cur + remaining}
                   onCancel={() => p.setEditing(null)}
                   onSave={(amount) => {
                     const err = setExact(g.id, amount);
@@ -602,9 +611,14 @@ function MyResult({ pc, mine, name, role }: { pc: PublicCourse; mine: MyCourse; 
                   <td>
                     <GroupName id={g.group} index={idx.get(g.group) ?? 0} />
                   </td>
-                  <td class="num">{wan(mine.alloc[g.group] ?? 0)}</td>
+                  <td class="num">
+                    {wan(mine.alloc[g.group] ?? 0)}
+                    {(mine.weighted?.[g.group] ?? 0) !== (mine.alloc[g.group] ?? 0) && (
+                      <small class="mini-weighted">加權 {wan(mine.weighted?.[g.group] ?? 0)}</small>
+                    )}
+                  </td>
                   <td class="num">×{g.multiplier}</td>
-                  <td class="num">{wan((mine.alloc[g.group] ?? 0) * g.multiplier)}</td>
+                  <td class="num">{wan((mine.weighted?.[g.group] ?? mine.alloc[g.group] ?? 0) * g.multiplier)}</td>
                 </tr>
               ))}
             </tbody>
