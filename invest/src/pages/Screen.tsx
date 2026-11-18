@@ -11,6 +11,7 @@ import { Chart } from '../ui/Chart.tsx';
 import { Eyebrow, GroupName, Logo, PhaseBadge, QrCode, Swatch, THEME, ThemeTag, groupIndexMap, pad2 } from '../ui/common.tsx';
 import { useFlip } from '../ui/motion.ts';
 import { PayoutTable } from '../ui/Payout.tsx';
+import { PresentingBar, presentingNow } from '../ui/Presenting.tsx';
 import { GroupCarousel } from '../ui/Showcase.tsx';
 import { AwardsView, SlideView } from '../ui/Stage.tsx';
 import { Count, Sparkle, Ticker, Wan, WinBar } from '../ui/y2k.tsx';
@@ -117,7 +118,15 @@ export function Screen() {
   );
 }
 
-const PAYOUT_TICKER = ['股神獎倍率', '第 1 名 ×3', '第 2 名 ×2', '第 3 名 ×1.5', '其餘 ×1', '報酬 ＝ 投資金額 × 倍率'];
+const PAYOUT_TICKER = [
+  '時段加權：簡報 ×2',
+  'Demo ×1.5',
+  '業師講評 ×1.2',
+  '名次倍率：第 1 名 ×3',
+  '第 2 名 ×2',
+  '第 3 名 ×1.5',
+  '報酬 ＝ 投資 × 時段加權 × 名次倍率',
+];
 
 /** 底部跑馬燈：未開盤跑規則、開盤中跑各組金額、暗盤只跑提示（不含任何金額） */
 function ScreenTicker({ pc }: { pc: PublicCourse }) {
@@ -134,7 +143,7 @@ function ScreenTicker({ pc }: { pc: PublicCourse }) {
   } else if (pc.phase === 'dark') {
     items = ['Dark Mode', '暗盤中', '金額與排名已隱藏', '倒數結束自動封盤', '還沒投完的同學快調整', ...PAYOUT_TICKER];
   } else {
-    items = ['Live Market', '掃 QR code 加入', '每人 100 萬虛擬資金', '只能投別組', '單一組最多 50 萬', ...PAYOUT_TICKER, '等待開盤'];
+    items = ['Live Market', '掃 QR code 加入', '每人 100 萬虛擬資金', '只能投別組', '有信心可以 all in', ...PAYOUT_TICKER, '等待開盤'];
   }
   return <Ticker items={items} class={`screen-ticker ticker-${pc.phase}`} />;
 }
@@ -172,7 +181,7 @@ function PendingView({ pc, joinUrl, darkMs }: { pc: PublicCourse; joinUrl: strin
         <ol class="pending-rules">
           {[
             '每人 100 萬虛擬資金，只能投別組',
-            '單一組最多 50 萬',
+            '沒有單組上限，有信心可以 all in',
             '沒投完的錢，封盤時從自己那組倒扣',
             `最後 ${dark}暗盤：金額與排名隱藏`,
           ].map((t, i) => (
@@ -225,11 +234,13 @@ function LiveView({
   useFlip(boardRef);
   const ids = pc.groups.map((g) => g.id);
   const before = totalsAt(points, now - 60_000) ?? points[0]?.totals ?? {};
+  const live = presentingNow(pc, now);
   const ranked = [...pc.groups].sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0) || (idx.get(a.id) ?? 0) - (idx.get(b.id) ?? 0));
   return (
     <main class="screen-live">
       <section class="screen-chart-panel">
         <WinBar title="MARKET_CHART.EXE" />
+        <PresentingBar pc={pc} now={now} size="screen" />
         <Chart groups={ids} points={points} now={now} offset={offset} live label="各組獲得金額的即時走勢" />
       </section>
       <aside class="screen-board">
@@ -252,6 +263,7 @@ function LiveView({
                 <span class="board-name">
                   <Swatch index={idx.get(g.id) ?? 0} />
                   <span class="group-short">{name.short}</span>
+                  {live?.group === g.id && live.weight > 1 && <span class="board-live">報告中 ×{live.weight}</span>}
                 </span>
                 <span class="board-total">
                   <Wan value={g.total ?? 0} ms={350} />
@@ -287,7 +299,7 @@ function DarkView({ pc, now, joinUrl }: { pc: PublicCourse; now: number; joinUrl
           </span>
         </div>
         <div class="dark-hint">倒數結束自動封盤 · 還沒投完的同學快調整</div>
-        <PayoutTable size="screen" compact />
+        {presentingNow(pc, now) ? <PresentingBar pc={pc} now={now} size="screen" /> : <PayoutTable size="screen" compact />}
         <JoinBox joinUrl={joinUrl} />
       </div>
       <GroupCarousel pc={pc} />

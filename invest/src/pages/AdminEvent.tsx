@@ -1,16 +1,81 @@
 // 管理員：大螢幕舞台控制（頒獎、業師總結）、各組作品、帳號、總結投影片
 import { useEffect, useState } from 'preact/hooks';
 import { splitGroupLabel } from '../../shared/roster.ts';
-import { COURSE_IDS, courseLabel, type AdminOverview, type AdminSlide, type CourseId, type Role } from '../../shared/types.ts';
+import { clockTime, countdown } from '../../shared/format.ts';
+import { COURSE_IDS, courseLabel, type AdminOverview, type AdminSlide, type CourseId, type PublicCourse, type Role } from '../../shared/types.ts';
 import { rpc } from '../api.ts';
-import { Card, Eyebrow, pad2 } from '../ui/common.tsx';
+import { Card, Eyebrow, GroupName, groupIndexMap, pad2 } from '../ui/common.tsx';
 import { imageToDataUrl } from '../ui/image.ts';
+import { PresentingBar, presentingNow } from '../ui/Presenting.tsx';
 import { Cover } from '../ui/Showcase.tsx';
 
 type Act = (fn: string, args: Record<string, unknown>, done?: string) => Promise<void>;
 type Notify = (text: string, tone?: 'info' | 'error') => void;
 
 const ROLE_LABEL: Record<Role, string> = { student: '學生', mentor: '業師／老師', guest: '來賓' };
+
+// ---------- 報告順序（時段加權） ----------
+
+/** 每組上台時按「開始報告」：簡報 3 分 ×2 → Demo 7 分 ×1.5 → 業師講評 6 分 ×1.2 自動計時 */
+export function PresentCard({ pc, now, act, busy }: { pc: PublicCourse; now: number; act: Act; busy: boolean }) {
+  const idx = groupIndexMap(pc);
+  const live = presentingNow(pc, now);
+  const ids = pc.groups.map((g) => g.id);
+  const cur = live ? ids.indexOf(live.group) : -1;
+  // 下一組：目前那組的下一組；沒有在報告時，是第一個還沒報告過的組
+  const next = cur >= 0 ? (ids[cur + 1] ?? null) : (ids.find((g) => !pc.presented[g]) ?? null);
+  const closed = pc.phase === 'closed';
+
+  function start(g: string) {
+    const label = splitGroupLabel(g).short;
+    if (live && live.stage && live.group !== g) {
+      const curLabel = splitGroupLabel(live.group).short;
+      if (!confirm(`${curLabel}還在「${live.stage.label}」（剩 ${countdown(live.leftMs)}），確定換${label}上台？${curLabel}的加權時段會立即結束。`)) return;
+    } else if (pc.presented[g] && !confirm(`${label}已經報告過，要重新開始計時嗎？`)) {
+      return;
+    }
+    void act('invest_admin_present', { course: pc.course, grp: g }, `${label}開始報告：簡報 ×2`);
+  }
+
+  return (
+    <Card class="present-card">
+      <Eyebrow>Presenting · 報告順序</Eyebrow>
+      <h2 class="card-title">每組上台時按「開始報告」</h2>
+      <p class="muted">
+        按下後自動計時：簡報 3 分鐘 ×2 → Demo 7 分鐘 ×1.5 → 業師講評 6 分鐘 ×1.2，之後 ×1。換下一組上台時，上一組的加權立即結束。
+      </p>
+      {live && <PresentingBar pc={pc} now={now} />}
+      <div class="control-buttons">
+        <button class="btn btn-accent btn-lg" disabled={busy || closed || !next} onClick={() => next && start(next)}>
+          {next ? `▶ 下一組上台：${splitGroupLabel(next).short}` : '所有組都報告過了'}
+        </button>
+        <button
+          class="btn btn-outline btn-lg"
+          disabled={busy || !live}
+          onClick={() => void act('invest_admin_present', { course: pc.course, grp: null }, '已停止計時')}
+        >
+          停止計時
+        </button>
+      </div>
+      <ol class="present-list">
+        {pc.groups.map((g, i) => {
+          const on = live?.group === g.id;
+          const at = pc.presented[g.id];
+          return (
+            <li key={g.id} class={on ? 'on' : at ? 'done' : ''}>
+              <span class="present-num">{pad2(i + 1)}</span>
+              <GroupName id={g.id} index={idx.get(g.id) ?? 0} />
+              <span class="present-status">{on ? `報告中 · ${live?.stage?.label ?? '時段結束'}` : at ? `${clockTime(at)} 已報告` : '還沒報告'}</span>
+              <button class="btn btn-sm" disabled={busy || closed} onClick={() => start(g.id)}>
+                {at ? '重新開始' : '開始報告'}
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+    </Card>
+  );
+}
 
 // ---------- 舞台控制 ----------
 

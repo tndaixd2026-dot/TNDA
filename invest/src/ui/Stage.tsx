@@ -123,7 +123,7 @@ export function AwardsView({ scene, pub }: { scene: AwardScene; pub: PublicState
             ))}
             {scene.winners.length > 6 && <p class="stage-lead">…等 {scene.winners.length} 人並列</p>}
           </div>
-          <p class="stage-note">個人報酬排名：{scene.investors} 位有投資的同學（業師、來賓不列入）</p>
+          <p class="stage-note">個人報酬排名：{scene.investors} 位有投資的同學（業師、來賓不列入）· 報酬同分時，下注越快的人勝出</p>
         </main>
       );
     case 'finale':

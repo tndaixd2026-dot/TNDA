@@ -261,13 +261,22 @@ describe('瀏覽器實測：學生下單 → 大螢幕', () => {
     // 餘額數字會滑動到新值，等它停下來
     await expect.poll(() => phone.locator('.wallet-value').innerText(), { timeout: 2000 }).toContain('70');
 
-    // 超過單組上限：擋下並提示，金額不變
-    await phone.getByRole('button', { name: '5 萬', exact: true }).click();
-    for (let i = 0; i < 4; i++) await plus.click();
-    await expect(row.locator('.hold-amount').innerText()).resolves.toContain('50');
+    // 沒有單組上限：可以 all in 100 萬；超過餘額才擋下並提示，金額不變
+    await phone.getByRole('button', { name: '10 萬', exact: true }).click();
+    for (let i = 0; i < 7; i++) await plus.click();
+    await expect(row.locator('.hold-amount').innerText()).resolves.toContain('100');
     await plus.click();
-    await phone.getByText('這組已達單組上限 50 萬').waitFor();
-    await expect(row.locator('.hold-amount').innerText()).resolves.toContain('50');
+    await phone.getByText('餘額不足，先從別組撤回一些').waitFor();
+    await expect(row.locator('.hold-amount').innerText()).resolves.toContain('100');
+    const minus = row.getByRole('button', { name: /第2組 減少/ });
+    for (let i = 0; i < 5; i++) await minus.click();
+    await expect.poll(() => phone.locator('.wallet-value').innerText(), { timeout: 2000 }).toContain('50');
+    await phone.getByRole('button', { name: '5 萬', exact: true }).click();
+
+    // 第3組上台報告：大螢幕與手機都顯示「報告中 ×2」，投給第3組的錢加權 ×2
+    await admin('invest_admin_present', { course: 'wed', grp: '第3組' });
+    await screen.locator('.presenting').getByText('第3組').waitFor({ timeout: 2000 });
+    await phone.locator('.stock-boost-tag').getByText('現在投這組').waitFor({ timeout: 4000 });
 
     // 進入暗盤：大螢幕只剩倒數，沒有任何金額；學生端隱藏各組金額但看得到自己的
     await admin('invest_admin_phase', { course: 'wed', action: 'dark' });
@@ -280,6 +289,8 @@ describe('瀏覽器實測：學生下單 → 大螢幕', () => {
     await third.getByRole('button', { name: /第3組 增加/ }).click();
     await expect(third.locator('.hold-amount').innerText()).resolves.toContain('5');
     await expect.poll(() => phone.locator('.wallet-value').innerText(), { timeout: 2000 }).toContain('45');
+    await phone.getByText('時段加權後 10 萬').waitFor({ timeout: 4000 });
+    await screen.locator('.presenting').waitFor();
 
     // 倒數結束自動封盤：結果先不公開，大螢幕輪播各組作品，學生手機等待頒獎
     await screen.getByText('等待頒獎揭曉').waitFor({ timeout: (DARK_SECONDS + 3) * 1000 });

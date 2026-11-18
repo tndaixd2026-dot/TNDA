@@ -52,7 +52,7 @@ create table if not exists invest.alloc (
   course text not null,
   name_key text not null,
   grp text not null,
-  amount bigint not null check (amount > 0 and amount <= 500000),
+  amount bigint not null check (amount > 0),
   primary key (course, name_key, grp)
 );
 
@@ -132,6 +132,31 @@ alter table invest.config add column if not exists stage_step int not null defau
 -- 封盤後結果先不公開，頒獎揭曉該場第一名時才公開（大螢幕、學生手機）
 alter table invest.course add column if not exists revealed boolean not null default false;
 
+-- 沒有單一組上限（可以 all in 100 萬）；舊版的 50 萬上限拿掉
+alter table invest.alloc drop constraint if exists alloc_amount_check;
+alter table invest.alloc add constraint alloc_amount_check check (amount > 0 and amount <= 1000000);
+
+-- 報告時段：管理員在某組上台時按「開始報告」→ 簡報 3 分 ×2、Demo 7 分 ×1.5、業師講評 6 分 ×1.2，之後 ×1
+alter table invest.course add column if not exists presenting text;
+alter table invest.course add column if not exists presenting_at timestamptz;
+-- 各組最近一次開始報告的時間（組別 → 毫秒），管理員頁顯示「已報告」
+alter table invest.course add column if not exists presented jsonb not null default '{}'::jsonb;
+
+-- 每一筆投資（由 alloc 的觸發器維護，加總永遠等於 alloc.amount）：
+-- 下單當下決定時段加權；撤回時先扣最晚的
+create table if not exists invest.lot (
+  id bigserial primary key,
+  course text not null,
+  name_key text not null,
+  grp text not null,
+  amount bigint not null check (amount > 0),
+  weight numeric(3, 1) not null default 1,
+  -- 從該組開始報告到下單的毫秒數（同分比快慢用；報告時段以外 = 16 分鐘）
+  delay_ms bigint not null default 960000,
+  at timestamptz not null default now()
+);
+create index if not exists lot_owner on invest.lot (course, name_key, grp, id);
+
 alter table invest.config enable row level security;
 alter table invest.roster enable row level security;
 alter table invest.course enable row level security;
@@ -143,6 +168,7 @@ alter table invest.account enable row level security;
 alter table invest.session enable row level security;
 alter table invest.group_info enable row level security;
 alter table invest.slide enable row level security;
+alter table invest.lot enable row level security;
 
 -- ---------- 小工具 ----------
 
@@ -288,15 +314,91 @@ language sql stable set search_path = '' as $$
   select coalesce((select a.role from invest.account a where a.name_key = k), 'student')
 $$;
 
+-- ---------- 報告時段加權 ----------
+
+-- 開始報告後經過 elapsed 毫秒的加權（與 shared/rules.ts 的 PRESENT_STAGES 相同）
+create or replace function invest.stage_weight(elapsed bigint) returns numeric
+language sql immutable set search_path = '' as $$
+  select case when elapsed is null or elapsed < 0 then 1.0
+              when elapsed < 180000 then 2.0
+              when elapsed < 600000 then 1.5
+              when elapsed < 960000 then 1.2
+              else 1.0 end
+$$;
+
+-- 某組現在是不是正在報告；是的話回傳開始報告後經過的毫秒數，否則 null
+create or replace function invest.present_elapsed(c text, g text) returns bigint
+language sql stable set search_path = '' as $$
+  select invest.ms(now()) - invest.ms(cs.presenting_at)
+  from invest.course cs
+  where cs.course = c and cs.presenting = g and cs.presenting_at is not null
+$$;
+
+-- alloc 變動時維護 lot：增加的部分記一筆（當下加權）；減少時先扣最晚的；刪除就全部清掉
+create or replace function invest.sync_lots() returns trigger
+language plpgsql set search_path = '' as $$
+declare
+  v_old bigint := 0;
+  v_new bigint := 0;
+  v_course text;
+  v_key text;
+  v_grp text;
+  v_elapsed bigint;
+  v_cut bigint;
+  l record;
+begin
+  if tg_op in ('UPDATE', 'DELETE') then v_old := old.amount; end if;
+  if tg_op in ('INSERT', 'UPDATE') then
+    v_new := new.amount; v_course := new.course; v_key := new.name_key; v_grp := new.grp;
+  else
+    v_course := old.course; v_key := old.name_key; v_grp := old.grp;
+  end if;
+  if tg_op = 'UPDATE' and (old.course, old.name_key, old.grp) is distinct from (new.course, new.name_key, new.grp) then
+    delete from invest.lot lt where lt.course = old.course and lt.name_key = old.name_key and lt.grp = old.grp;
+    v_old := 0;
+  end if;
+  if v_new > v_old then
+    v_elapsed := invest.present_elapsed(v_course, v_grp);
+    insert into invest.lot (course, name_key, grp, amount, weight, delay_ms)
+    values (v_course, v_key, v_grp, v_new - v_old, invest.stage_weight(v_elapsed),
+            case when v_elapsed is null or v_elapsed < 0 then 960000 else least(v_elapsed, 960000) end);
+  elsif v_new < v_old then
+    v_cut := v_old - v_new;
+    for l in select lt.id, lt.amount from invest.lot lt
+              where lt.course = v_course and lt.name_key = v_key and lt.grp = v_grp
+              order by lt.id desc loop
+      exit when v_cut <= 0;
+      if l.amount <= v_cut then
+        delete from invest.lot lt where lt.id = l.id;
+        v_cut := v_cut - l.amount;
+      else
+        update invest.lot set amount = amount - v_cut where id = l.id;
+        v_cut := 0;
+      end if;
+    end loop;
+  end if;
+  return null;
+end
+$$;
+
+drop trigger if exists alloc_lots on invest.alloc;
+create trigger alloc_lots after insert or update or delete on invest.alloc
+  for each row execute function invest.sync_lots();
+
+-- 舊資料（加權功能上線前的投資）補成 ×1 的一筆
+insert into invest.lot (course, name_key, grp, amount)
+select a.course, a.name_key, a.grp, a.amount from invest.alloc a
+where not exists (select 1 from invest.lot lt where lt.course = a.course and lt.name_key = a.name_key and lt.grp = a.grp);
+
 -- ---------- 狀態計算 ----------
 
--- 目前各組獲得的投資總額（不含倒扣）
+-- 目前各組獲得的投資總額（每筆 × 時段加權，不含倒扣）
 create or replace function invest.totals(c text) returns jsonb
 language sql stable set search_path = '' as $$
   select coalesce(jsonb_object_agg(u.grp, coalesce(t.total, 0)), '{}'::jsonb)
   from unnest(invest.groups(c)) as u(grp)
   left join (
-    select a.grp, sum(a.amount) as total from invest.alloc a where a.course = c group by a.grp
+    select lt.grp, sum(lt.amount * lt.weight) as total from invest.lot lt where lt.course = c group by lt.grp
   ) t on t.grp = u.grp
 $$;
 
@@ -318,9 +420,11 @@ $$;
 
 /*
   封盤結算（與 shared/rules.ts 的 computeResults 相同，測試會逐一比對）：
-  - 各組最終金額 = 投進來的總額 − 自己組員沒花完的錢（只倒扣這一場有登入過的人）
+  - 每一筆投資（invest.lot）在下單當下決定時段加權 ×2／×1.5／×1.2／×1
+  - 各組最終金額 = Σ（每筆金額 × 加權）− 自己組員沒花完的錢（只倒扣這一場有登入過的人）
   - 依最終金額排名（同分同名次、下一名順延）→ 倍率 ×3、×2、×1.5、其餘 ×1；最高的組即使為負數也得獎
-  - 個人報酬 = Σ（投在該組的金額 × 該組倍率），未花完的錢不計入；個人名次只算有投資的人
+  - 個人報酬 = Σ（每筆金額 × 加權 × 該組倍率），未花完的錢不計入；個人名次只算有投資的人
+  - 報酬同分時比下注快慢（delay_ms 依金額加權平均，四捨五入到毫秒，小者在前）；仍相同才並列
   - 業師、老師、訪客（account.role <> 'student'）：投資算進各組總額；不倒扣、不參加股神獎與個人名次（另列在 others）
 */
 create or replace function invest.compute_results(c text) returns jsonb
@@ -335,11 +439,11 @@ language sql stable set search_path = '' as $$
     where ac.role <> 'student' and not exists (select 1 from invest.roster r where r.course = c and r.name_key = ac.name_key)
   ),
   va as (
-    select a.name_key, a.grp, a.amount
-    from invest.alloc a
-    join m on m.name_key = a.name_key
-    join g on g.grp = a.grp
-    where a.course = c and (m.own is null or a.grp <> m.own)
+    select lt.name_key, lt.grp, lt.amount, lt.weight, lt.delay_ms
+    from invest.lot lt
+    join m on m.name_key = lt.name_key
+    join g on g.grp = lt.grp
+    where lt.course = c and (m.own is null or lt.grp <> m.own)
   ),
   inv as (
     select m.name_key, m.name, m.own, m.student,
@@ -355,7 +459,7 @@ language sql stable set search_path = '' as $$
   ),
   gr0 as (
     select g.grp, g.ord,
-           coalesce((select sum(va.amount) from va where va.grp = g.grp), 0) as raw,
+           coalesce((select sum(va.amount * va.weight) from va where va.grp = g.grp), 0) as raw,
            coalesce((select sum(ded.unspent) from ded where ded.grp = g.grp), 0) as penalty
     from g
   ),
@@ -370,13 +474,15 @@ language sql stable set search_path = '' as $$
   ),
   pay as (
     select inv.name, inv.own, inv.invested, inv.student,
-           coalesce((select sum(va.amount * grm.mult) from va join grm on grm.grp = va.grp
-                     where va.name_key = inv.name_key), 0) as payout
+           coalesce((select sum(va.amount * va.weight * grm.mult) from va join grm on grm.grp = va.grp
+                     where va.name_key = inv.name_key), 0) as payout,
+           round((select sum(va.amount * va.delay_ms) from va where va.name_key = inv.name_key)::numeric
+                 / inv.invested) as delay
     from inv
     where inv.invested > 0
   ),
   pr as (
-    select pay.*, rank() over (order by pay.payout desc) as rnk from pay where pay.student
+    select pay.*, rank() over (order by pay.payout desc, pay.delay asc) as rnk from pay where pay.student
   )
   select jsonb_build_object(
     'groups', coalesce((
@@ -392,7 +498,7 @@ language sql stable set search_path = '' as $$
     'investors', coalesce((
       select jsonb_agg(jsonb_build_object(
                'name', pr.name, 'group', pr.own, 'invested', pr.invested,
-               'unspent', 1000000 - pr.invested, 'payout', pr.payout, 'rank', pr.rnk)
+               'unspent', 1000000 - pr.invested, 'payout', pr.payout, 'delayMs', pr.delay, 'rank', pr.rnk)
              order by pr.rnk, pr.name collate "C")
       from pr), '[]'::jsonb),
     'others', coalesce((
@@ -536,6 +642,9 @@ begin
     'darkAt', invest.ms(cs.dark_at),
     'darkEndsAt', invest.ms(cs.dark_ends_at),
     'closedAt', invest.ms(cs.closed_at),
+    'presenting', case when cs.presenting is not null and cs.phase <> 'closed' then
+                    jsonb_build_object('group', cs.presenting, 'startedAt', invest.ms(cs.presenting_at)) end,
+    'presented', cs.presented,
     'groups', v_groups,
     'students', (select count(*) from invest.roster r where r.course = c),
     'joined', (select count(*) from invest.roster r where r.course = c and invest.is_present(c, r.name_key)),
@@ -718,7 +827,9 @@ declare
   v_own text;
   v_name text;
   cs invest.course;
+  v_roster_name text;
   v_alloc jsonb;
+  v_weighted jsonb;
   v_inv numeric;
   v_result jsonb;
   v_ded numeric;
@@ -728,13 +839,18 @@ begin
   foreach c in array array['wed', 'thu'] loop
     v_own := null;
     if v_role = 'student' then
-      select ro.grp, coalesce(v_name, ro.name) into v_own, v_name from invest.roster ro where ro.course = c and ro.name_key = k;
+      -- 注意：查不到時 select into 會把變數設成 null，所以名字另外接，不能直接蓋掉 v_name
+      select ro.grp, ro.name into v_own, v_roster_name from invest.roster ro where ro.course = c and ro.name_key = k;
       if not found then continue; end if;
+      v_name := coalesce(v_name, v_roster_name);
     end if;
     select * into cs from invest.course co where co.course = c;
     select coalesce(jsonb_object_agg(a.grp, a.amount), '{}'::jsonb), coalesce(sum(a.amount), 0)
       into v_alloc, v_inv
       from invest.alloc a where a.course = c and a.name_key = k;
+    select coalesce(jsonb_object_agg(w.grp, w.v), '{}'::jsonb) into v_weighted
+      from (select lt.grp, sum(lt.amount * lt.weight) as v from invest.lot lt
+            where lt.course = c and lt.name_key = k group by lt.grp) w;
     v_result := null;
     v_ded := null;
     -- 頒獎揭曉該場第一名之後才公開
@@ -757,7 +873,7 @@ begin
       end if;
     end if;
     res := res || jsonb_build_object(c, jsonb_build_object(
-      'course', c, 'group', v_own, 'alloc', v_alloc, 'invested', v_inv,
+      'course', c, 'group', v_own, 'alloc', v_alloc, 'weighted', v_weighted, 'invested', v_inv,
       'remaining', 1000000 - v_inv, 'result', v_result, 'deducted', v_ded,
       'awaiting', cs.phase = 'closed' and not cs.revealed));
   end loop;
@@ -1017,7 +1133,6 @@ begin
   if v_amount is null or v_amount < 0 or v_amount <> trunc(v_amount) then
     return invest.err('bad_amount', '金額必須是 0 以上的整數');
   end if;
-  if v_amount > 500000 then return invest.err('over_limit', '單一組最多只能投 50 萬'); end if;
 
   select coalesce(sum(a.amount), 0) into v_others
     from invest.alloc a where a.course = v_course and a.name_key = v_key and a.grp <> v_grp;
@@ -1139,6 +1254,35 @@ begin
 end
 $$;
 
+-- 某組上台：開始報告（三個時段自動計時）。grp 傳 null 或空字串 = 停止計時（沒有組在報告）
+create or replace function public.invest_admin_present(pw text, course text, grp text default null) returns jsonb
+language plpgsql volatile security definer set search_path = '' as $$
+declare
+  v_course text := course;
+  v_grp text := nullif(btrim(coalesce(grp, '')), '');
+  cs invest.course;
+begin
+  if not invest.check_admin(pw) then return invest.err('unauthorized', '管理員密碼錯誤'); end if;
+  if v_course is null or v_course not in ('wed', 'thu') then return invest.err('bad_course', '場次錯誤'); end if;
+  perform invest.expire_due(v_course);
+  select * into cs from invest.course co where co.course = v_course for update;
+  if cs.phase = 'closed' then return invest.err('bad_phase', '已封盤，不能再開始報告'); end if;
+  if v_grp is not null and not (v_grp = any (invest.groups(v_course))) then
+    return invest.err('unknown_group', '沒有這個組別');
+  end if;
+  if v_grp is null then
+    update invest.course set presenting = null, presenting_at = null where invest.course.course = v_course;
+  else
+    update invest.course
+       set presenting = v_grp, presenting_at = now(),
+           presented = cs.presented || jsonb_build_object(v_grp, invest.ms(now()))
+     where invest.course.course = v_course;
+  end if;
+  perform invest.bump();
+  return invest.admin_overview();
+end
+$$;
+
 -- 重置某一場（彩排用）：清除投資、走勢、結果與出席紀錄，名單保留
 create or replace function public.invest_admin_reset(pw text, course text) returns jsonb
 language plpgsql volatile security definer set search_path = '' as $$
@@ -1153,7 +1297,8 @@ begin
   delete from invest.presence p where p.course = v_course;
   update invest.course
      set phase = 'pending', opened_at = null, dark_at = null, dark_ends_at = null, closed_at = null,
-         dark_history_id = null, closed_from = null, dark_left_ms = null, results = null, revealed = false
+         dark_history_id = null, closed_from = null, dark_left_ms = null, results = null, revealed = false,
+         presenting = null, presenting_at = null, presented = '{}'::jsonb
    where invest.course.course = v_course;
   perform invest.bump();
   return invest.admin_overview();
@@ -1645,7 +1790,8 @@ begin
     'invest_intro_board()', 'invest_admin_attendance(text, jsonb, boolean)', 'invest_admin_board(text, boolean)',
     'invest_login(text, text)', 'invest_group_cover(text, text)', 'invest_slide_image(bigint)',
     'invest_admin_stage(text, text, integer)', 'invest_admin_group(text, text, text, text, text, boolean)',
-    'invest_admin_slides(text, jsonb)', 'invest_admin_account_save(text, jsonb, boolean)', 'invest_admin_account_delete(text, text)'
+    'invest_admin_slides(text, jsonb)', 'invest_admin_account_save(text, jsonb, boolean)', 'invest_admin_account_delete(text, text)',
+    'invest_admin_present(text, text, text)'
   ] loop
     execute format('revoke all on function public.%s from public', fn);
     select exists (select 1 from pg_roles where rolname = 'anon') into has_role;
