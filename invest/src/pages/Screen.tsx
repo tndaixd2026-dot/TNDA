@@ -237,24 +237,30 @@ function LiveView({
         <h2 class="board-title">
           <Eyebrow>Ranking · 目前排行</Eyebrow>
         </h2>
+        <div class="board-head" aria-hidden="true">
+          <span>名次</span>
+          <span>組別</span>
+          <span>金額 · 近 1 分鐘</span>
+        </div>
         <ol class="board" ref={boardRef}>
           {ranked.map((g) => {
             const delta = (g.total ?? 0) - (before[g.id] ?? 0);
+            const name = splitGroupLabel(g.id);
             return (
               <li key={g.id} data-key={g.id} class={`board-row${g.rank === 1 ? ' board-top' : ''}`}>
-                <span class="board-rank">
-                  {pad2(g.rank ?? 0)}
-                  <span class="board-mult">×{multiplierForRank(g.rank ?? 99)}</span>
+                <span class="board-rank">{pad2(g.rank ?? 0)}</span>
+                <span class="board-name">
+                  <Swatch index={idx.get(g.id) ?? 0} />
+                  <span class="group-short">{name.short}</span>
                 </span>
-                <GroupName id={g.id} index={idx.get(g.id) ?? 0} stacked />
-                <span class="board-value">
-                  <span class="board-total">
-                    <Wan value={g.total ?? 0} ms={350} />
-                    <small>萬</small>
-                  </span>
-                  <span class="board-delta">
-                    {delta === 0 ? '1 分鐘內 —' : `1 分鐘內 ${delta > 0 ? '↑' : '↓'} ${wan(Math.abs(delta))} 萬`}
-                  </span>
+                <span class="board-total">
+                  <Wan value={g.total ?? 0} ms={350} />
+                  <small>萬</small>
+                </span>
+                <span class="board-mult">×{multiplierForRank(g.rank ?? 99)}</span>
+                <span class="board-nick">{name.nick}</span>
+                <span class={`board-delta${delta > 0 ? ' up' : delta < 0 ? ' down' : ''}`}>
+                  {delta === 0 ? '—' : `${delta > 0 ? '↑' : '↓'} ${wan(Math.abs(delta))} 萬`}
                 </span>
               </li>
             );
