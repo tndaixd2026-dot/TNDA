@@ -77,6 +77,7 @@ export type InvestError =
   | 'not_open'
   | 'closed'
   | 'unknown_group'
+  | 'own_group'
   | 'bad_amount'
   | 'over_budget';
 
@@ -84,6 +85,7 @@ export const INVEST_ERROR_MESSAGE: Record<InvestError, string> = {
   not_open: '還沒開盤，開盤後才能投資',
   closed: '已經封盤，不能再調整',
   unknown_group: '沒有這個組別',
+  own_group: '不能投資自己那組',
   bad_amount: '金額必須是 0 以上的整數',
   over_budget: '餘額不足',
 };
@@ -104,6 +106,7 @@ export function checkInvest(c: InvestCheck): InvestError | null {
   if (c.phase === 'pending') return 'not_open';
   if (c.phase === 'closed') return 'closed';
   if (!c.groups.includes(c.group)) return 'unknown_group';
+  if (c.group === c.ownGroup) return 'own_group';
   if (!Number.isSafeInteger(c.amount) || c.amount < 0) return 'bad_amount';
   const others = sumAlloc(c.current) - (c.current[c.group] ?? 0);
   if (others + c.amount > BUDGET) return 'over_budget';
@@ -133,8 +136,7 @@ export interface Member {
 /**
  * 封盤結算（與 supabase/schema.sql 的 invest.compute_results 相同，測試會逐一比對）。
  * - 每一筆投資（lot）在下單當下決定時段加權 ×2／×1.5／×1.2／×1
- * - 各組最終金額 = Σ（別組的人投進來的每筆金額 × 加權）− 自己組員沒花完的錢
- * - 學生可以投自己那組：算進個人報酬與「已投資」，但不算進自己組的總額
+ * - 各組最終金額 = Σ（每筆金額 × 加權）− 自己組員沒花完的錢
  *   （只倒扣這一場有登入過的人；整場沒登入的缺席者不倒扣。有投資的人一定算有登入）
  * - 依最終金額排名（同分同名次、下一名順延），決定倍率；最高的組即使是負數也得一飛沖天獎
  * - 個人報酬 = Σ（每筆金額 × 加權 × 該組倍率），沒花完的錢不計入
@@ -161,14 +163,14 @@ export function computeResults(
     deductions[g] = [];
   }
 
-  // 防禦性：只計入存在的組。投給自己那組的錢算個人報酬，但不算進自己組的總額
+  // 防禦性：只計入合法的組（存在、且不是自己那組）
   const valid = new Map<string, Lot[]>();
   for (const m of members) {
     const mine =
       lots[m.name] ?? Object.entries(allocs[m.name] ?? {}).map(([group, amount]) => ({ group, amount, weight: 1, delayMs: PRESENT_WINDOW_MS }));
     valid.set(
       m.name,
-      mine.filter((l) => l.group in rawNum && l.amount > 0),
+      mine.filter((l) => l.group in rawNum && l.group !== m.group && l.amount > 0),
     );
   }
   const w10 = (w: number) => Math.round(w * 10);
@@ -177,7 +179,7 @@ export function computeResults(
   for (const m of members) {
     let sum = 0;
     for (const l of valid.get(m.name) ?? []) {
-      if (l.group !== m.group) rawNum[l.group] += l.amount * w10(l.weight);
+      rawNum[l.group] += l.amount * w10(l.weight);
       sum += l.amount;
     }
     invested.set(m.name, sum);

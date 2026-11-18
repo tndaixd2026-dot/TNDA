@@ -48,9 +48,9 @@ export function PayoutTable({ size = 'phone', compact = false }: { size?: 'scree
       <Tiers items={RANK_TIERS} />
       {!compact && (
         <p class="payout-formula">
-          各組總額 ＝ 別組的人投進來的每筆 × 時段加權（決定<strong>一飛沖天獎</strong>）
+          各組總額 ＝ 每筆投資 × 時段加權（決定<strong>一飛沖天獎</strong>）
           <br />
-          你的報酬 ＝ 每筆投資 × 時段加權 × 名次倍率（投自己組也算），最高的人拿<strong>股神獎</strong>
+          你的報酬 ＝ 每筆投資 × 時段加權 × 名次倍率，最高的人拿<strong>股神獎</strong>
           <span class="payout-eg">例：在第 1 名那組簡報時投 50 萬 → 50 × 2 × 3 ＝ 300 萬。同分時，下注越快的人勝出</span>
         </p>
       )}

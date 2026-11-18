@@ -139,9 +139,8 @@ function Login({ onLogin, notice }: { onLogin: (token: string) => void; notice: 
       </form>
       <ol class="rules">
         {[
-          '每堂課各有 100 萬，可以投同堂課的任何一組',
+          '每堂課各有 100 萬，只能投給同堂課的其他組',
           '沒有單組上限：很有信心可以 all in 100 萬',
-          '也可以投自己組：只算股神獎，不算進一飛沖天',
           '封盤時沒投完的錢，會從你們組的總額倒扣',
           '最後 5 分鐘是暗盤：看不到各組金額，但還能調整',
           '某組上台報告時投給它有加權：簡報 ×2、Demo ×1.5、講評 ×1.2',
@@ -408,7 +407,7 @@ function CourseMarket(p: CourseMarketProps) {
           const cur = alloc[g.id] ?? 0;
           const short = splitGroupLabel(g.id).short;
           const result = pc.results?.groups.find((r) => r.group === g.id);
-          const boost = weightNow(live, g.id);
+          const boost = isOwn ? 1 : weightNow(live, g.id);
           // 加權後金額（伺服器算好的；送出中還沒回來時先不顯示）
           const weighted = (mine.alloc[g.id] ?? 0) === cur ? (mine.weighted?.[g.id] ?? cur) : null;
           return (
@@ -440,8 +439,9 @@ function CourseMarket(p: CourseMarketProps) {
                   )}
                 </div>
               </div>
-              {isOwn && <div class="stock-own-note">自己的組 · 投自己組只算股神獎，不算進一飛沖天</div>}
-              {pc.phase === 'closed' ? (
+              {isOwn ? (
+                <div class="stock-own-note">自己的組 · 不能投資</div>
+              ) : pc.phase === 'closed' ? (
                 <div class="stock-trade">
                   <span class="hold-label">我投</span>
                   <span class="hold-final">
@@ -481,12 +481,12 @@ function CourseMarket(p: CourseMarketProps) {
                   </button>
                 </div>
               )}
-              {cur > 0 && weighted !== null && weighted !== cur && (
+              {!isOwn && cur > 0 && weighted !== null && weighted !== cur && (
                 <div class="stock-weighted">
                   時段加權後 <strong>{wan(weighted)} 萬</strong>
                 </div>
               )}
-              {canTrade && p.editing === g.id && (
+              {!isOwn && canTrade && p.editing === g.id && (
                 <AmountEditor
                   initial={cur}
                   max={cur + remaining}
