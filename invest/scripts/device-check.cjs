@@ -83,6 +83,7 @@ function audit() {
   const roster = (await admin('invest_admin_overview', {})).roster.filter((r) => r.course === 'wed');
   await admin('invest_admin_set_active', { course: 'wed' });
   await admin('invest_admin_reset', { course: 'wed' });
+  await admin('invest_admin_stage', { action: 'market' });
   await admin('invest_admin_phase', { course: 'wed', action: 'open' });
 
   let n = 0;
@@ -110,6 +111,7 @@ function audit() {
     await page.waitForTimeout(700);
     await snap('login');
     await page.getByLabel('你的姓名').fill(student.name);
+    await page.getByLabel('密碼').fill('1234');
     await page.getByRole('button', { name: '進入' }).click();
     await page.getByText('可用餘額').waitFor();
     await page.waitForTimeout(900);
@@ -145,6 +147,7 @@ function audit() {
     const slug = String(n).padStart(2, '0');
     await page.goto(base + '/?intro=0');
     await page.getByLabel('你的姓名').fill(student.name);
+    await page.getByLabel('密碼').fill('1234');
     await page.getByRole('button', { name: '進入' }).click();
     await page.getByText('暗盤隱藏').first().waitFor();
     await page.waitForTimeout(600);
@@ -154,6 +157,10 @@ function audit() {
     await ctx.close();
   }
   await admin('invest_admin_phase', { course: 'wed', action: 'close' });
+  // 封盤後結果要等頒獎揭曉：直接跳到頒獎最後一步再回到盤況畫面
+  await admin('invest_admin_stage', { action: 'awards' });
+  await admin('invest_admin_stage', { action: 'goto', step: 999 });
+  await admin('invest_admin_stage', { action: 'market' });
   n = 0;
   for (const [name, dev] of DEVICES) {
     const ctx = await browser.newContext({ ...dev });
@@ -162,6 +169,7 @@ function audit() {
     const slug = String(n).padStart(2, '0');
     await page.goto(base + '/?intro=0');
     await page.getByLabel('你的姓名').fill(student.name);
+    await page.getByLabel('密碼').fill('1234');
     await page.getByRole('button', { name: '進入' }).click();
     await page.getByText('你的報酬').waitFor();
     await page.waitForTimeout(1600);

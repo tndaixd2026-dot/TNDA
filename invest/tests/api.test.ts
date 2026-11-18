@@ -11,6 +11,9 @@ import { BUDGET, computeResults } from '../shared/rules.ts';
 import type { AdminOverview, HistoryPoint, MeState, PublicState, Results, RosterEntry } from '../shared/types.ts';
 
 const W = 10_000;
+const STUDENT_PW = '0101';
+/** 登入後的憑證，依「伺服器｜姓名」快取 */
+const tokens = new Map<string, string>();
 // 管理員密碼可以是中文
 const PW = '測試老師';
 
@@ -48,10 +51,15 @@ afterAll(async () => {
 /** 每個測試從乾淨的資料開始 */
 async function reset(opts: { darkMs?: number; roster?: RosterEntry[] } = {}) {
   await db.pg.exec(`
-    truncate invest.alloc, invest.presence, invest.history, invest.roster, invest.attendance restart identity;
+    truncate invest.alloc, invest.presence, invest.history, invest.roster, invest.attendance, invest.session restart identity;
+    delete from invest.account a where a.role <> 'guest';
+    truncate invest.group_info;
+    truncate invest.slide restart identity;
+    insert into invest.slide (pos, kind, title, subtitle, body) values
+      (1, 'title', '業師總結', '期末提報「這個殼以！」', ''), (2, 'recap', '數字回顧', '', ''), (3, 'text', '謝謝大家', 'TNDA · Next D', '');
     update invest.course set phase = 'pending', opened_at = null, dark_at = null, dark_ends_at = null,
-      closed_at = null, dark_history_id = null, closed_from = null, dark_left_ms = null, results = null;
-    update invest.config set active = 'wed', board_visible = true, version = version + 1;
+      closed_at = null, dark_history_id = null, closed_from = null, dark_left_ms = null, results = null, revealed = false;
+    update invest.config set active = 'wed', board_visible = true, stage_mode = 'market', stage_step = 0, version = version + 1;
   `);
   await db.pg.query('update invest.config set dark_ms = $1 where id = 1', [opts.darkMs ?? 60_000]);
   await db.pg.query(
@@ -60,6 +68,10 @@ async function reset(opts: { darkMs?: number; roster?: RosterEntry[] } = {}) {
      from jsonb_array_elements($1::jsonb) e`,
     [JSON.stringify(opts.roster ?? ROSTER)],
   );
+  // 測試用：每位學生的密碼都是 0101
+  await db.pg.exec(`select invest.ensure_student_accounts();
+    select invest.set_password(a.name_key, '${STUDENT_PW}') from invest.account a where a.role = 'student';`);
+  tokens.clear();
 }
 beforeEach(() => reset());
 
@@ -74,9 +86,30 @@ async function call<T = Record<string, unknown>>(fn: string, args: Record<string
 }
 type Err = { error?: string; message?: string };
 const state = (at = base) => call<PublicState>('invest_state', {}, at);
-const me = (name: string, at = base) => call<MeState & Err>('invest_me', { name }, at);
-const invest = (name: string, grp: string, amount: number, course = 'wed') =>
-  call<MeState & Err>('invest_invest', { name, course, grp, amount });
+/** 用姓名＋密碼登入，回傳憑證；登入失敗回傳錯誤 */
+async function login(name: string, at = base, password = STUDENT_PW): Promise<{ token?: string } & Err> {
+  const k = `${at}|${name}`;
+  const cached = tokens.get(k);
+  if (cached) return { token: cached };
+  const r = await call<{ token?: string; me?: MeState } & Err>('invest_login', { name, password }, at);
+  if (r.token) tokens.set(k, r.token);
+  return r;
+}
+const me = async (name: string, at = base) => {
+  const l = await login(name, at);
+  if (!l.token) return l as MeState & Err;
+  return call<MeState & Err>('invest_me', { token: l.token }, at);
+};
+/** 頒獎揭曉某一場（測試結算時直接公開，頒獎流程另外測） */
+async function reveal(course: string) {
+  await db.pg.query('update invest.course set revealed = true where course = $1', [course]);
+  await db.pg.exec('update invest.config set version = version + 1 where id = 1');
+}
+const invest = async (name: string, grp: string, amount: number, course = 'wed') => {
+  const l = await login(name);
+  if (!l.token) return l as MeState & Err;
+  return call<MeState & Err>('invest_invest', { token: l.token, course, grp, amount });
+};
 const phase = (course: string, action: string, at = base) =>
   call<AdminOverview & Err>('invest_admin_phase', { pw: PW, course, action }, at);
 const adminResults = (course: string) => call<Results>('invest_admin_results', { pw: PW, course });
@@ -202,6 +235,7 @@ describe('封盤結算', () => {
     await invest('乙', '第3組', 30 * W); // 乙剩 20 萬 → 第2組倒扣
     await me('丙'); // 丙有登入但沒投 → 第3組倒扣 100 萬
     await phase('wed', 'close');
+    await reveal('wed');
 
     const r = await adminResults('wed');
     expect(r.groups.map((g) => [g.group, g.raw, g.penalty, g.final, g.rank, g.multiplier])).toEqual([
@@ -230,7 +264,11 @@ describe('封盤結算', () => {
     ]);
     expect(s.courses.wed.results!.stockGods).toEqual([{ name: '乙', group: '第2組', payout: 195 * W }]);
     expect(s.courses.wed.results!.investorCount).toBe(2);
-    const json = JSON.stringify(s);
+    // 排行榜與結果只有各組金額（組員名單是頒獎展示用，另外放在 memberNames）
+    const json = JSON.stringify({
+      results: s.courses.wed.results,
+      groups: s.courses.wed.groups.map(({ memberNames: _m, ...g }) => g),
+    });
     expect(json).not.toContain('丙');
     expect(json).not.toContain('甲');
   });
@@ -298,6 +336,7 @@ describe('封盤結算', () => {
     await invest('甲', '第1組', 50 * W, 'thu');
     await invest('甲', '第3組', 50 * W, 'thu');
     await phase('thu', 'close');
+    await reveal('thu');
     const r = await adminResults('thu');
     const g = Object.fromEntries(r.groups.map((x) => [x.group, x]));
     expect(g['第1組']).toMatchObject({ raw: 50 * W, penalty: 100 * W, final: -50 * W }); // 丁出席沒投
@@ -380,8 +419,15 @@ describe('暗盤', () => {
     expect(JSON.stringify(m)).not.toContain('第2組": 30');
 
     await phase('wed', 'close');
+    // 封盤後、頒獎揭曉前：金額、名次、暗盤後的走勢與封盤點都還不公開
     const closed = await state();
-    expect(closed.courses.wed.groups.every((g) => g.total !== null && g.rank !== null)).toBe(true);
+    expect(closed.courses.wed.groups.every((g) => g.total === null && g.rank === null)).toBe(true);
+    expect(closed.courses.wed.results).toBeNull();
+    expect((await history()).wed).toEqual(histAtDark);
+    expect((await me('乙')).courses.wed).toMatchObject({ result: null, deducted: null, awaiting: true });
+    await reveal('wed');
+    const shown = await state();
+    expect(shown.courses.wed.groups.every((g) => g.total !== null && g.rank !== null)).toBe(true);
     expect((await history()).wed.length).toBeGreaterThan(histAtDark.length);
   });
 
@@ -398,7 +444,10 @@ describe('暗盤', () => {
     const s = await state();
     expect(s.courses.wed.phase).toBe('closed');
     expect(s.courses.wed.closedAt).toBe(s.courses.wed.darkEndsAt);
-    expect(s.courses.wed.results!.rocket.length).toBeGreaterThan(0);
+    // 封盤後結果先不公開，等頒獎揭曉
+    expect(s.courses.wed.results).toBeNull();
+    expect(s.courses.wed.groups.every((g) => g.total === null)).toBe(true);
+    expect((await adminResults('wed')).rocket.length).toBeGreaterThan(0);
     expect((await invest('甲', '第2組', 0)).error).toBe('closed');
   });
 
@@ -415,17 +464,18 @@ describe('暗盤', () => {
   it('資料存在磁碟：重啟後還原；重啟期間倒數已結束 → 開起來就是已封盤', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'invest-pg-'));
     try {
-      const a = await openDb({ dataDir: dir, adminPassword: PW, darkMs: 600, seed: ROSTER });
+      const a = await openDb({ dataDir: dir, adminPassword: PW, darkMs: 600, seed: ROSTER, seedPassword: STUDENT_PW });
       const sa = await startServer(a);
       await phase('wed', 'open', sa.base);
-      await call('invest_invest', { name: '甲', course: 'wed', grp: '第2組', amount: 30 * W }, sa.base);
+      const t = await login('甲', sa.base);
+      await call('invest_invest', { token: t.token, course: 'wed', grp: '第2組', amount: 30 * W }, sa.base);
       await phase('wed', 'dark', sa.base);
       sa.server.closeAllConnections();
       await new Promise((r) => sa.server.close(r));
       await a.close();
 
       await sleep(800);
-      const b = await openDb({ dataDir: dir, adminPassword: PW, seed: ROSTER });
+      const b = await openDb({ dataDir: dir, adminPassword: PW, seed: ROSTER, seedPassword: STUDENT_PW });
       const sb = await startServer(b);
       const s = await state(sb.base);
       expect(s.courses.wed.phase).toBe('closed');
@@ -480,7 +530,7 @@ describe('取消封盤', () => {
     await sleep(left + 200);
     const closed = await state();
     expect(closed.courses.wed.phase).toBe('closed');
-    expect(closed.courses.wed.results!.groups.find((g) => g.group === '第3組')?.raw).toBe(10 * W);
+    expect((await adminResults('wed')).groups.find((g) => g.group === '第3組')?.raw).toBe(10 * W);
   });
 
   it('倒數結束自動封盤後取消 → 回到開盤中；只有已封盤才能取消', async () => {
@@ -684,5 +734,185 @@ describe('登入動畫：出席率行情看板', () => {
     await call('invest_admin_board', { pw: PW, visible: true });
     await importAtt([], true);
     expect((await board()).rows).toEqual([]);
+  });
+});
+
+describe('帳號與密碼', () => {
+  it('學生要輸入姓名＋密碼（生日後四碼）；錯 5 次鎖 1 分鐘；憑證失效要重新登入', async () => {
+    const ok = await call<{ token?: string; me?: MeState } & Err>('invest_login', { name: ' 甲 ', password: STUDENT_PW });
+    expect(ok.token).toMatch(/^[0-9a-f]{64}$/);
+    expect(ok.me?.role).toBe('student');
+    const bad = await call<Err>('invest_login', { name: '甲', password: '9999' });
+    expect(bad.error).toBe('bad_password');
+    expect(bad.message).toContain('生日後四碼');
+    expect((await call<Err>('invest_login', { name: '路人', password: '0101' })).error).toBe('not_in_roster');
+    // 沒有憑證不能投資、不能看自己的資料
+    expect((await call<Err>('invest_me', { token: 'x'.repeat(64) })).error).toBe('bad_session');
+    await phase('wed', 'open');
+    expect((await call<Err>('invest_invest', { token: 'x'.repeat(64), course: 'wed', grp: '第2組', amount: 10 * W })).error).toBe('bad_session');
+    // 錯 5 次 → 鎖住，連正確密碼也暫時不能登入
+    for (let i = 0; i < 4; i++) await call('invest_login', { name: '乙', password: '1111' });
+    expect((await call<Err>('invest_login', { name: '乙', password: '1111' })).error).toBe('bad_password');
+    expect((await call<Err>('invest_login', { name: '乙', password: STUDENT_PW })).error).toBe('locked');
+    // 管理員重設密碼：解鎖，而且舊的登入失效
+    const s1 = await call<{ ok: boolean }>('invest_admin_account_save', {
+      pw: PW, entries: [{ name: '甲', role: 'student', password: '0403' }], apply: true });
+    expect(s1.ok).toBe(true);
+    expect((await call<Err>('invest_me', { token: ok.token })).error).toBe('bad_session');
+    expect((await call<{ token?: string }>('invest_login', { name: '甲', password: '0403' })).token).toBeTruthy();
+    expect((await call<Err>('invest_admin_account_save', { pw: 'x', entries: [], apply: true })).error).toBe('unauthorized');
+  });
+
+  it('業師、老師、來賓：密碼預設 TNDA（大小寫不拘）；兩場都能投、每場 100 萬；算進各組總額但不倒扣、不參加股神獎', async () => {
+    const add = await call<{ ok: boolean; created: number }>('invest_admin_account_save', {
+      pw: PW, entries: [{ name: '王業師', role: 'mentor' }], apply: true });
+    expect(add).toMatchObject({ ok: true, created: 1 });
+    // 學生不能被改成業師
+    expect((await call<{ ok: boolean }>('invest_admin_account_save', {
+      pw: PW, entries: [{ name: '甲', role: 'mentor' }], apply: false })).ok).toBe(false);
+    const mentor = await call<{ token: string; me: MeState }>('invest_login', { name: '王業師', password: 'tnda' });
+    expect(mentor.me.role).toBe('mentor');
+    expect(Object.keys(mentor.me.courses).sort()).toEqual(['thu', 'wed']);
+    expect(mentor.me.courses.wed?.group).toBeNull();
+    // 預設的 5 個來賓帳號
+    const guest = await call<{ token: string; me: MeState }>('invest_login', { name: 'TNDA3', password: 'TNDA' });
+    expect(guest.me.role).toBe('guest');
+
+    await phase('wed', 'open');
+    const inv = (t: string, grp: string, amount: number, course = 'wed') =>
+      call<MeState & Err>('invest_invest', { token: t, course, grp, amount });
+    expect((await inv(mentor.token, '第1組', 50 * W)).error).toBeUndefined();
+    expect((await inv(mentor.token, '第1組', 60 * W)).error).toBe('over_limit');
+    expect((await inv(guest.token, '第3組', 40 * W)).error).toBeUndefined();
+    await invest('甲', '第2組', 50 * W);
+    await invest('甲', '第3組', 50 * W);
+    expect((await state()).courses.wed.groups.find((g) => g.id === '第1組')?.total).toBe(50 * W);
+    // 業師、來賓不算學生人數
+    expect((await state()).courses.wed.students).toBe(3);
+    await phase('wed', 'close');
+
+    const r = await adminResults('wed');
+    const g = Object.fromEntries(r.groups.map((x) => [x.group, x]));
+    expect(g['第1組']).toMatchObject({ raw: 50 * W, penalty: 0 });
+    expect(g['第3組']).toMatchObject({ raw: 90 * W, penalty: 0 });
+    // 股神只比學生
+    expect(r.investors.map((i) => i.name)).toEqual(['甲']);
+    expect(r.stockGods).toEqual(['甲']);
+    expect(r.others?.map((o) => o.name).sort()).toEqual(['TNDA3', '王業師'].sort());
+    await reveal('wed');
+    const m = await call<MeState>('invest_me', { token: mentor.token });
+    expect(m.courses.wed?.result).toMatchObject({ rank: null, of: null });
+    expect(m.courses.wed?.result?.payout).toBe(50 * W * g['第1組'].multiplier);
+    // 刪除業師帳號：已封盤場次有投資就不能刪
+    expect((await call<Err>('invest_admin_account_delete', { pw: PW, name: '王業師' })).error).toBe('closed');
+  });
+});
+
+describe('頒獎與業師總結（大螢幕舞台）', () => {
+  const stageAct = (action: string, step?: number) =>
+    call<AdminOverview & Err>('invest_admin_stage', { pw: PW, action, step });
+
+  it('兩場封盤後由管理員一步一步揭曉；走到某場第 1 名時該場結果才公開到學生手機', async () => {
+    await phase('wed', 'open');
+    await invest('甲', '第2組', 50 * W);
+    await invest('甲', '第3組', 50 * W);
+    await invest('乙', '第1組', 50 * W);
+    await invest('乙', '第3組', 50 * W);
+    await phase('wed', 'close');
+    await call('invest_admin_set_active', { pw: PW, course: 'thu' });
+    await phase('thu', 'open');
+    await invest('甲', '第1組', 50 * W, 'thu');
+    await invest('甲', '第3組', 50 * W, 'thu');
+    await phase('thu', 'close');
+
+    expect((await state()).stage.mode).toBe('market');
+    expect((await me('甲')).courses.wed).toMatchObject({ result: null, awaiting: true });
+
+    const ov = await stageAct('awards');
+    const labels = ov.stage.awardLabels;
+    expect(labels[0]).toBe('頒獎典禮開場');
+    expect(labels).toContain('上半場・週三：第 1 名・一飛沖天獎');
+    expect(labels).toContain('下半場・週四：股神獎');
+    expect(labels[labels.length - 1]).toBe('頒獎結束');
+    // 第 1 名之前（開場、週三第 3、2 名）都還沒公開
+    const firstWed = labels.indexOf('上半場・週三：第 1 名・一飛沖天獎');
+    for (let i = 0; i < firstWed - 1; i++) await stageAct('next');
+    let s = await state();
+    expect(s.stage.mode).toBe('awards');
+    expect(s.courses.wed.revealed).toBe(false);
+    expect(s.courses.wed.results).toBeNull();
+    // 第 2 名那一步有作品資訊與組員
+    const podium = s.stage.scene as { kind: string; groups: { memberNames: string[]; slogan: string }[] };
+    expect(podium.kind).toBe('podium');
+    expect(podium.groups[0].memberNames.length).toBeGreaterThan(0);
+
+    await stageAct('next');
+    s = await state();
+    expect(s.stage.scene).toMatchObject({ kind: 'rocket', course: 'wed', rank: 1 });
+    expect(s.courses.wed.revealed).toBe(true);
+    expect(s.courses.thu.revealed).toBe(false);
+    expect((await me('甲')).courses.wed?.result?.rank).toBeGreaterThan(0);
+    expect((await me('甲')).courses.thu?.result).toBeNull();
+
+    // 往回走不會收回已公開的結果；跳到最後也會公開週四
+    await stageAct('prev');
+    expect((await state()).courses.wed.revealed).toBe(true);
+    await stageAct('goto', 999);
+    s = await state();
+    expect(s.stage.scene?.kind).toBe('finale');
+    expect(s.courses.thu.revealed).toBe(true);
+
+    // 業師總結：預設三頁，數字回顧帶入兩場資料
+    const sum = await stageAct('summary');
+    expect(sum.stage.slideLabels).toEqual(['業師總結', '數字回顧', '謝謝大家']);
+    await stageAct('next');
+    s = await state();
+    expect(s.stage).toMatchObject({ mode: 'summary', step: 1, total: 3 });
+    const recap = (s.stage.scene as { recap: { course: string; invested: number }[] }).recap;
+    expect(recap.find((c) => c.course === 'wed')?.invested).toBe(200 * W);
+    expect((await stageAct('next', undefined)).stage.step).toBe(2);
+    expect((await stageAct('next', undefined)).stage.step).toBe(2); // 已是最後一頁
+    expect((await stageAct('market')).stage.mode).toBe('market');
+    expect((await call<Err>('invest_admin_stage', { pw: 'x', action: 'awards' })).error).toBe('unauthorized');
+  });
+
+  it('取消封盤、重置會收回揭曉；各組封面與 slogan；總結投影片可編輯', async () => {
+    await phase('wed', 'open');
+    await phase('wed', 'close');
+    await stageAct('awards');
+    await stageAct('goto', 999);
+    expect((await state()).courses.wed.revealed).toBe(true);
+    await stageAct('market');
+    await phase('wed', 'reopen');
+    expect((await state()).courses.wed.revealed).toBe(false);
+
+    const cover = 'data:image/jpeg;base64,' + 'A'.repeat(100);
+    const g = await call<AdminOverview & Err>('invest_admin_group', { pw: PW, course: 'wed', grp: '第2組', slogan: ' 讓光說話 ', cover });
+    expect(g.groupInfo.wed.find((x) => x.group === '第2組')).toMatchObject({ slogan: '讓光說話', coverVer: 1 });
+    const pub = (await state()).courses.wed.groups.find((x) => x.id === '第2組')!;
+    expect(pub).toMatchObject({ slogan: '讓光說話', coverVer: 1, memberNames: ['乙'] });
+    expect((await call<{ cover: string }>('invest_group_cover', { course: 'wed', grp: '第2組' })).cover).toBe(cover);
+    expect((await call<Err>('invest_admin_group', { pw: PW, course: 'wed', grp: '第2組', cover: 'javascript:alert(1)' })).error).toBe('bad_cover');
+    expect((await call<Err>('invest_admin_group', { pw: PW, course: 'wed', grp: '第9組', slogan: 'x' })).error).toBe('unknown_group');
+    const cleared = await call<AdminOverview>('invest_admin_group', { pw: PW, course: 'wed', grp: '第2組', clear_cover: true });
+    expect(cleared.groupInfo.wed.find((x) => x.group === '第2組')?.coverVer).toBeNull();
+
+    const before = (await call<AdminOverview>('invest_admin_overview', { pw: PW })).slides;
+    const img = 'data:image/png;base64,' + 'B'.repeat(50);
+    const saved = await call<AdminOverview>('invest_admin_slides', {
+      pw: PW,
+      slides: [
+        { id: before[2].id, kind: 'text', title: '謝謝大家', subtitle: '', body: '' },
+        { kind: 'text', title: '蔡宏賢老師', subtitle: '超維度', body: '第一點\n第二點', image: img },
+      ],
+    });
+    expect(saved.slides.map((x) => x.title)).toEqual(['謝謝大家', '蔡宏賢老師']);
+    expect(saved.slides[0].id).toBe(before[2].id);
+    expect(saved.slides[1].imageVer).toBe(1);
+    expect((await call<{ image: string }>('invest_slide_image', { id: saved.slides[1].id })).image).toBe(img);
+    // 沒有給 image 欄位 → 保留原本的圖
+    const kept = await call<AdminOverview>('invest_admin_slides', {
+      pw: PW, slides: saved.slides.map(({ imageVer: _v, ...x }) => x) });
+    expect(kept.slides[1].imageVer).toBe(1);
   });
 });

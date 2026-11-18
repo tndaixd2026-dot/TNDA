@@ -8,8 +8,10 @@ import {
   courseLabel,
   type Allocation,
   type CourseId,
+  type LoginResult,
   type MeState,
   type MyCourse,
+  type Role,
   type PublicCourse,
 } from '../../shared/types.ts';
 import { rpc, storageGet, storageSet, useLive, useNow } from '../api.ts';
@@ -17,52 +19,57 @@ import { Card, ConnectionDot, Eyebrow, GroupName, Logo, PhaseBadge, ThemeTag, gr
 import { Intro, shouldPlayIntro } from '../ui/Intro.tsx';
 import { Cursor, Sparkle, Wan, WinBar } from '../ui/y2k.tsx';
 
-const NAME_KEY = 'invest.name';
+// 登入後的憑證（不是密碼）；舊版只存姓名的紀錄會被清掉
+const TOKEN_KEY = 'invest.token';
 const STEP_KEY = 'invest.step';
 const STEPS = [10_000, 50_000, 100_000];
 
 export function Student() {
-  const [name, setName] = useState<string | null>(() => storageGet(NAME_KEY));
+  const [token, setToken] = useState<string | null>(() => {
+    storageSet('invest.name', null);
+    return storageGet(TOKEN_KEY);
+  });
   const [notice, setNotice] = useState<string | null>(null);
-  if (!name) {
+  if (!token) {
     return (
       <Login
         notice={notice}
-        onLogin={(n) => {
-          storageSet(NAME_KEY, n);
+        onLogin={(t) => {
+          storageSet(TOKEN_KEY, t);
           setNotice(null);
-          setName(n);
+          setToken(t);
         }}
       />
     );
   }
   return (
     <Market
-      key={name}
-      name={name}
+      key={token}
+      token={token}
       onLogout={(msg) => {
-        storageSet(NAME_KEY, null);
+        storageSet(TOKEN_KEY, null);
         setNotice(msg ?? null);
-        setName(null);
+        setToken(null);
       }}
     />
   );
 }
 
-function Login({ onLogin, notice }: { onLogin: (name: string) => void; notice: string | null }) {
+function Login({ onLogin, notice }: { onLogin: (token: string) => void; notice: string | null }) {
   const [value, setValue] = useState('');
+  const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(notice);
   const [intro, setIntro] = useState(() => !notice && shouldPlayIntro());
 
   async function submit(e: Event) {
     e.preventDefault();
-    if (!value.trim() || busy) return;
+    if (!value.trim() || !password.trim() || busy) return;
     setBusy(true);
     setError(null);
     try {
-      const me = await rpc<MeState>('invest_me', { name: value });
-      onLogin(me.name);
+      const res = await rpc<LoginResult>('invest_login', { name: value, password });
+      onLogin(res.token);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -101,16 +108,30 @@ function Login({ onLogin, notice }: { onLogin: (name: string) => void; notice: s
           value={value}
           onInput={(e) => setValue((e.target as HTMLInputElement).value)}
           placeholder="例如：王小明"
-          autocomplete="name"
+          autocomplete="username"
           autoFocus={!intro}
           maxLength={40}
         />
+        <label for="password" class="field-label">
+          密碼
+        </label>
+        <input
+          id="password"
+          class="text-input"
+          type="password"
+          value={password}
+          onInput={(e) => setPassword((e.target as HTMLInputElement).value)}
+          placeholder="學生：生日後四碼（例如 0403）"
+          autocomplete="current-password"
+          maxLength={40}
+        />
+        <p class="login-hint">學生：生日月日四碼（4 月 3 日 → 0403）· 業師、老師、來賓：TNDA</p>
         {error && (
           <p class="form-error" role="alert">
             {error}
           </p>
         )}
-        <button class="btn btn-solid btn-block btn-lg" type="submit" disabled={busy || !value.trim()}>
+        <button class="btn btn-solid btn-block btn-lg" type="submit" disabled={busy || !value.trim() || !password.trim()}>
           {busy ? '登入中…' : '進入'}
         </button>
       </form>
@@ -132,8 +153,8 @@ function Login({ onLogin, notice }: { onLogin: (name: string) => void; notice: s
   );
 }
 
-function Market({ name, onLogout }: { name: string; onLogout: (msg?: string) => void }) {
-  const { pub, me, meError, setMe, offset, connected } = useLive({ name });
+function Market({ token, onLogout }: { token: string; onLogout: (msg?: string) => void }) {
+  const { pub, me, meError, setMe, offset, connected } = useLive({ token });
   const now = useNow(offset, 250);
   const toast = useToast();
   const [step, setStepState] = useState(() => {
@@ -147,9 +168,9 @@ function Market({ name, onLogout }: { name: string; onLogout: (msg?: string) => 
   const failed = useRef(false);
   const lastGood = useRef<MeState | null>(null);
 
-  // 名單更新後找不到這個名字 → 回到登入頁
+  // 登入失效（密碼被重設、名單更新）→ 回到登入頁
   useEffect(() => {
-    if (meError) onLogout('名單已更新，找不到你的名字，請重新輸入');
+    if (meError) onLogout(meError.message);
   }, [meError]);
 
   function setStep(s: number) {
@@ -175,7 +196,7 @@ function Market({ name, onLogout }: { name: string; onLogout: (msg?: string) => 
     inflight.current++;
     chain.current = chain.current.then(async () => {
       try {
-        lastGood.current = await rpc<MeState>('invest_invest', { name, course, grp: group, amount });
+        lastGood.current = await rpc<MeState>('invest_invest', { token, course, grp: group, amount });
       } catch (err) {
         failed.current = true;
         toast.show((err as Error).message, 'error');
@@ -185,7 +206,7 @@ function Market({ name, onLogout }: { name: string; onLogout: (msg?: string) => 
           if (failed.current) {
             failed.current = false;
             try {
-              setMe(await rpc<MeState>('invest_me', { name }));
+              setMe(await rpc<MeState>('invest_me', { token }));
             } catch {
               // 推播會補上最新狀態
             }
@@ -218,8 +239,9 @@ function Market({ name, onLogout }: { name: string; onLogout: (msg?: string) => 
       <div class="identity">
         <span>
           <span class="identity-label">登入身分</span> {me.name}
+          {me.role !== 'student' && <span class="role-tag">{me.role === 'mentor' ? '業師／老師' : '來賓'}</span>}
           <button class="link-btn" onClick={() => onLogout()}>
-            不是我
+            登出
           </button>
         </span>
         <ConnectionDot connected={connected} />
@@ -228,6 +250,7 @@ function Market({ name, onLogout }: { name: string; onLogout: (msg?: string) => 
       {mine ? (
         <CourseMarket
           name={me.name}
+          role={me.role}
           course={course}
           pc={pc}
           mine={mine}
@@ -257,6 +280,7 @@ function Market({ name, onLogout }: { name: string; onLogout: (msg?: string) => 
 
 interface CourseMarketProps {
   name: string;
+  role: Role;
   course: CourseId;
   pc: PublicCourse;
   mine: MyCourse;
@@ -279,7 +303,8 @@ function CourseMarket(p: CourseMarketProps) {
   const remaining = BUDGET - invested;
   const darkLeft = pc.darkEndsAt ? pc.darkEndsAt - now : 0;
   const canTrade = pc.phase === 'open' || (pc.phase === 'dark' && darkLeft > 0);
-  const own = splitGroupLabel(mine.group).short;
+  // 業師、老師、來賓沒有自己的組
+  const own = mine.group ? splitGroupLabel(mine.group).short : null;
 
   function change(group: string, delta: number) {
     const cur = alloc[group] ?? 0;
@@ -314,7 +339,18 @@ function CourseMarket(p: CourseMarketProps) {
 
   return (
     <>
-      {pc.phase === 'closed' && <MyResult pc={pc} mine={mine} name={p.name} />}
+      {pc.phase === 'closed' && !pc.revealed && (
+        <Card class="awaiting-card">
+          <WinBar title="WAITING.EXE" tone="orange" />
+          <Eyebrow>Closed · 已封盤</Eyebrow>
+          <p class="awaiting-text">
+            等待大螢幕頒獎揭曉
+            <Cursor />
+          </p>
+          <p class="muted">各組最終金額與你的報酬，會在頒獎時和大螢幕同步公開。</p>
+        </Card>
+      )}
+      {pc.phase === 'closed' && pc.revealed && <MyResult pc={pc} mine={mine} name={p.name} role={p.role} />}
 
       <Card class="wallet">
         <WinBar title="WALLET.EXE" />
@@ -336,7 +372,7 @@ function CourseMarket(p: CourseMarketProps) {
           <div class="meter-fill" style={{ width: `${Math.min(100, (invested / BUDGET) * 100)}%` }} />
         </div>
         <div class="wallet-sub">
-          已投資 {wan(invested)} / 100 萬 · 你是{own}
+          已投資 {wan(invested)} / 100 萬 · {own ? `你是${own}` : '業師、來賓不參加股神獎'}
         </div>
       </Card>
 
@@ -348,7 +384,8 @@ function CourseMarket(p: CourseMarketProps) {
       )}
       {canTrade && remaining > 0 && (
         <div class="banner banner-warn">
-          還有 <strong>{wan(remaining)} 萬</strong>沒投。封盤時沒投完的錢會從{own}倒扣。
+          還有 <strong>{wan(remaining)} 萬</strong>沒投。
+          {own ? `封盤時沒投完的錢會從${own}倒扣。` : '沒投完的錢不會倒扣，但也不會有報酬。'}
         </div>
       )}
       {canTrade && remaining === 0 && <div class="banner banner-good">全部投完了，封盤前都還能調整。</div>}
@@ -378,6 +415,7 @@ function CourseMarket(p: CourseMarketProps) {
                 <div class="stock-quote">
                   {pc.phase === 'pending' && <span class="quote-muted">—</span>}
                   {pc.phase === 'dark' && <span class="quote-muted">暗盤隱藏</span>}
+                  {pc.phase === 'closed' && g.total === null && <span class="quote-muted">頒獎揭曉</span>}
                   {(pc.phase === 'open' || pc.phase === 'closed') && g.total !== null && (
                     <>
                       <span class="quote-total">
@@ -515,7 +553,7 @@ function AmountEditor(p: { initial: number; max: number; onSave: (amount: number
   );
 }
 
-function MyResult({ pc, mine, name }: { pc: PublicCourse; mine: MyCourse; name: string }) {
+function MyResult({ pc, mine, name, role }: { pc: PublicCourse; mine: MyCourse; name: string; role: Role }) {
   const results = pc.results;
   if (!results) return null;
   const idx = groupIndexMap(pc);
@@ -536,8 +574,10 @@ function MyResult({ pc, mine, name }: { pc: PublicCourse; mine: MyCourse; name: 
               <small> 萬</small>
             </div>
             <div class="result-rank">
-              第 {mine.result.rank} 名 / {mine.result.of} 位有投資的同學
-              {isGod && <span class="award-tag">股神獎</span>}
+              {mine.result.rank !== null
+                ? `第 ${mine.result.rank} 名 / ${mine.result.of} 位有投資的同學`
+                : '業師、老師、來賓不列入股神獎排名'}
+              {role === 'student' && isGod && <span class="award-tag">股神獎</span>}
             </div>
           </>
         ) : (
@@ -569,7 +609,7 @@ function MyResult({ pc, mine, name }: { pc: PublicCourse; mine: MyCourse; name: 
         )}
         {(mine.deducted ?? 0) > 0 && (
           <p class="muted">
-            你有 {wan(mine.deducted ?? 0)} 萬沒投完，已從{splitGroupLabel(mine.group).short}倒扣，也不計入報酬。
+            你有 {wan(mine.deducted ?? 0)} 萬沒投完，已從{splitGroupLabel(mine.group ?? '').short}倒扣，也不計入報酬。
           </p>
         )}
       </Card>
@@ -599,7 +639,8 @@ function OtherResult({ course, mine }: { course: CourseId; mine: MyCourse }) {
   if (!mine.result) return null;
   return (
     <Card class="other-result">
-      {courseLabel(course)}結果：報酬 <strong>{wan(mine.result.payout)} 萬</strong>，第 {mine.result.rank} 名 / {mine.result.of} 人
+      {courseLabel(course)}結果：報酬 <strong>{wan(mine.result.payout)} 萬</strong>
+      {mine.result.rank !== null && `，第 ${mine.result.rank} 名 / ${mine.result.of} 人`}
     </Card>
   );
 }

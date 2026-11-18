@@ -9,6 +9,8 @@ import { useLive, useNow } from '../api.ts';
 import { Chart } from '../ui/Chart.tsx';
 import { Eyebrow, GroupName, Logo, PhaseBadge, QrCode, Swatch, THEME, ThemeTag, groupIndexMap, pad2 } from '../ui/common.tsx';
 import { useFlip } from '../ui/motion.ts';
+import { GroupCarousel } from '../ui/Showcase.tsx';
+import { AwardsView, SlideView } from '../ui/Stage.tsx';
 import { Count, Sparkle, Ticker, Wan, WinBar } from '../ui/y2k.tsx';
 
 export function Screen() {
@@ -30,6 +32,45 @@ export function Screen() {
   const points = live.history?.[course] ?? [];
   // 學生頁在大螢幕頁的上一層（/…/screen/ → /…/）
   const joinUrl = new URL('../', `${location.origin}${location.pathname}`).href;
+
+  // 頒獎與業師總結：同一個網址，由管理員頁切換
+  const stage = live.pub.stage;
+  if (stage.mode !== 'market') {
+    const sc = stage.scene;
+    const title = stage.mode === 'awards' ? 'Awards · 頒獎典禮' : 'Summary · 業師總結';
+    return (
+      <div class={`screen screen-stage stage-mode-${stage.mode} scene-${sc.kind}`}>
+        <header class="screen-header">
+          <div class="screen-title">
+            <Logo tone="white" size={56} />
+            <span class="screen-title-text">
+              <span class="screen-kicker">期末提報「{THEME}」</span>
+              <span class="screen-course">{title}</span>
+            </span>
+          </div>
+          <div class="screen-stats">
+            <span class="stage-progress">
+              {pad2(stage.step + 1)} / {pad2(stage.total)}
+            </span>
+            <span class="screen-clock">{clockTime(now)}</span>
+            {!live.connected && <span class="screen-offline">重新連線中…</span>}
+          </div>
+        </header>
+        {stage.mode === 'awards' && stage.scene.kind === 'ranking' ? (
+          <ResultsView
+            key={stage.step}
+            pc={live.pub.courses[stage.scene.course]}
+            points={live.history?.[stage.scene.course] ?? []}
+            now={now}
+          />
+        ) : stage.mode === 'awards' ? (
+          <AwardsView key={stage.step} scene={stage.scene} pub={live.pub} />
+        ) : (
+          <SlideView key={stage.step} scene={stage.scene} step={stage.step} total={stage.total} />
+        )}
+      </div>
+    );
+  }
 
   return (
     <div class={`screen screen-phase-${pc.phase}${pc.phase !== 'closed' ? ' has-ticker' : ''}`}>
@@ -67,7 +108,8 @@ export function Screen() {
       {pc.phase === 'pending' && <PendingView pc={pc} joinUrl={joinUrl} darkMs={live.pub.darkMs} />}
       {pc.phase === 'open' && <LiveView pc={pc} points={points} now={now} offset={live.offset} joinUrl={joinUrl} />}
       {pc.phase === 'dark' && <DarkView pc={pc} now={now} joinUrl={joinUrl} />}
-      {pc.phase === 'closed' && <ResultsView pc={pc} points={points} now={now} />}
+      {pc.phase === 'closed' && pc.revealed && <ResultsView pc={pc} points={points} now={now} />}
+      {pc.phase === 'closed' && !pc.revealed && <WaitingView pc={pc} />}
       {pc.phase !== 'closed' && <ScreenTicker pc={pc} />}
     </div>
   );
@@ -100,7 +142,7 @@ function JoinBox({ joinUrl, big }: { joinUrl: string; big?: boolean }) {
       <div class="join-text">
         <div class="join-title">手機掃碼加入</div>
         <div class="join-url">{joinUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')}</div>
-        <div class="join-hint">輸入姓名即可，不用密碼</div>
+        <div class="join-hint">輸入姓名＋密碼（學生：生日後四碼）</div>
       </div>
     </div>
   );
@@ -215,7 +257,6 @@ function LiveView({
 }
 
 function DarkView({ pc, now, joinUrl }: { pc: PublicCourse; now: number; joinUrl: string }) {
-  const idx = groupIndexMap(pc);
   const left = pc.darkEndsAt ? pc.darkEndsAt - now : 0;
   return (
     <main class="screen-dark">
@@ -230,21 +271,31 @@ function DarkView({ pc, now, joinUrl }: { pc: PublicCourse; now: number; joinUrl
           </span>
         </div>
         <div class="dark-hint">倒數結束自動封盤 · 還沒投完的同學快調整</div>
-        <div class="pending-groups">
-          {pc.groups.map((g) => (
-            <span class="group-chip" key={g.id}>
-              <GroupName id={g.id} index={idx.get(g.id) ?? 0} />
-              <span class="lock">隱藏</span>
-            </span>
-          ))}
-        </div>
+        <JoinBox joinUrl={joinUrl} />
       </div>
-      <JoinBox joinUrl={joinUrl} />
+      <GroupCarousel pc={pc} />
     </main>
   );
 }
 
-function ResultsView({ pc, points, now }: { pc: PublicCourse; points: HistoryPoint[]; now: number }) {
+/** 封盤後、頒獎揭曉前：不顯示任何金額，輪播各組作品 */
+function WaitingView({ pc }: { pc: PublicCourse }) {
+  return (
+    <main class="screen-dark screen-waiting">
+      <div class="dark-main">
+        <Sparkle class="dark-spark" size="3rem" color="var(--tnda-orange)" />
+        <div class="dark-kicker">
+          <span class="display">Closed</span> 已封盤
+        </div>
+        <div class="waiting-title">等待頒獎揭曉</div>
+        <div class="dark-hint">{courseLabel(pc.course)} · 封盤時間 {pc.closedAt ? clockTime(pc.closedAt) : '—'}</div>
+      </div>
+      <GroupCarousel pc={pc} />
+    </main>
+  );
+}
+
+export function ResultsView({ pc, points, now }: { pc: PublicCourse; points: HistoryPoint[]; now: number }) {
   const results = pc.results;
   const idx = groupIndexMap(pc);
   if (!results) return <main class="screen-loading">結算中…</main>;

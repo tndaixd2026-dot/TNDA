@@ -84,6 +84,54 @@ create table if not exists invest.attendance (
 -- 看板是否公開（學生登入頁看得到姓名與出席率）
 alter table invest.config add column if not exists board_visible boolean not null default true;
 
+-- 帳號：學生（名單匯入時自動建立，密碼 = 生日後四碼）、業師／老師、訪客（密碼預設 TNDA）
+-- 業師、老師、訪客兩場都能投、每場各 100 萬；投資算進各組總額，但不倒扣、不參加股神獎
+create table if not exists invest.account (
+  name_key text primary key,
+  name text not null,
+  role text not null default 'student' check (role in ('student', 'mentor', 'guest')),
+  salt text,
+  pw_hash text,
+  -- 連續輸錯 5 次鎖 1 分鐘
+  fails int not null default 0,
+  locked_until timestamptz
+);
+-- 登入後發給手機的憑證（存在手機的 localStorage）
+create table if not exists invest.session (
+  token text primary key,
+  name_key text not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists session_key on invest.session (name_key);
+
+-- 各組作品：封面照片（JPEG data URL，管理員頁上傳時先縮小）與題目 slogan
+create table if not exists invest.group_info (
+  course text not null check (course in ('wed', 'thu')),
+  grp text not null,
+  slogan text not null default '',
+  cover text,
+  cover_ver int not null default 0,
+  primary key (course, grp)
+);
+
+-- 業師總結的投影片（由管理員一頁一頁切換）
+create table if not exists invest.slide (
+  id bigserial primary key,
+  pos int not null default 0,
+  kind text not null default 'text' check (kind in ('title', 'text', 'recap')),
+  title text not null default '',
+  subtitle text not null default '',
+  body text not null default '',
+  image text,
+  image_ver int not null default 0
+);
+
+-- 大螢幕舞台：market（盤況）→ awards（頒獎，一步一步揭曉）→ summary（業師總結投影片）
+alter table invest.config add column if not exists stage_mode text not null default 'market';
+alter table invest.config add column if not exists stage_step int not null default 0;
+-- 封盤後結果先不公開，頒獎揭曉該場第一名時才公開（大螢幕、學生手機）
+alter table invest.course add column if not exists revealed boolean not null default false;
+
 alter table invest.config enable row level security;
 alter table invest.roster enable row level security;
 alter table invest.course enable row level security;
@@ -91,6 +139,10 @@ alter table invest.alloc enable row level security;
 alter table invest.presence enable row level security;
 alter table invest.history enable row level security;
 alter table invest.attendance enable row level security;
+alter table invest.account enable row level security;
+alter table invest.session enable row level security;
+alter table invest.group_info enable row level security;
+alter table invest.slide enable row level security;
 
 -- ---------- 小工具 ----------
 
@@ -200,6 +252,42 @@ language sql volatile set search_path = '' as $$
    where id = 1
 $$;
 
+-- 帳號密碼：每個帳號自己的 salt；密碼前後空白、全形半形、英文大小寫不影響
+create or replace function invest.pw_hash(salt text, pw text) returns text
+language sql immutable set search_path = '' as $$
+  select encode(sha256(convert_to(salt || ':' || upper(invest.norm_name(pw)), 'UTF8')), 'hex')
+$$;
+
+create or replace function invest.set_password(k text, pw text) returns void
+language plpgsql volatile set search_path = '' as $$
+declare
+  v_salt text := replace(gen_random_uuid()::text, '-', '');
+begin
+  update invest.account
+     set salt = v_salt, pw_hash = invest.pw_hash(v_salt, pw), fails = 0, locked_until = null
+   where name_key = k;
+  delete from invest.session s where s.name_key = k;
+end
+$$;
+
+-- 名單上的學生都要有帳號（還沒設密碼的不能登入）
+create or replace function invest.ensure_student_accounts() returns void
+language sql volatile set search_path = '' as $$
+  insert into invest.account (name_key, name, role)
+  select distinct on (r.name_key) r.name_key, r.name, 'student' from invest.roster r
+  on conflict (name_key) do nothing
+$$;
+
+create or replace function invest.session_key(p_token text) returns text
+language sql stable set search_path = '' as $$
+  select s.name_key from invest.session s where s.token = p_token and length(coalesce(p_token, '')) between 32 and 100
+$$;
+
+create or replace function invest.role_of(k text) returns text
+language sql stable set search_path = '' as $$
+  select coalesce((select a.role from invest.account a where a.name_key = k), 'student')
+$$;
+
 -- ---------- 狀態計算 ----------
 
 -- 目前各組獲得的投資總額（不含倒扣）
@@ -233,6 +321,7 @@ $$;
   - 各組最終金額 = 投進來的總額 − 自己組員沒花完的錢（只倒扣這一場有登入過的人）
   - 依最終金額排名（同分同名次、下一名順延）→ 倍率 ×3、×2、×1.5、其餘 ×1；最高的組即使為負數也得獎
   - 個人報酬 = Σ（投在該組的金額 × 該組倍率），未花完的錢不計入；個人名次只算有投資的人
+  - 業師、老師、訪客（account.role <> 'student'）：投資算進各組總額；不倒扣、不參加股神獎與個人名次（另列在 others）
 */
 create or replace function invest.compute_results(c text) returns jsonb
 language sql stable set search_path = '' as $$
@@ -240,24 +329,27 @@ language sql stable set search_path = '' as $$
     select u.grp, u.ord from unnest(invest.groups(c)) with ordinality as u(grp, ord)
   ),
   m as (
-    select r.name_key, r.name, r.grp as own from invest.roster r where r.course = c
+    select r.name_key, r.name, r.grp as own, true as student from invest.roster r where r.course = c
+    union all
+    select ac.name_key, ac.name, null, false from invest.account ac
+    where ac.role <> 'student' and not exists (select 1 from invest.roster r where r.course = c and r.name_key = ac.name_key)
   ),
   va as (
     select a.name_key, a.grp, a.amount
     from invest.alloc a
     join m on m.name_key = a.name_key
     join g on g.grp = a.grp
-    where a.course = c and a.grp <> m.own
+    where a.course = c and (m.own is null or a.grp <> m.own)
   ),
   inv as (
-    select m.name_key, m.name, m.own,
+    select m.name_key, m.name, m.own, m.student,
            coalesce((select sum(va.amount) from va where va.name_key = m.name_key), 0) as invested
     from m
   ),
   ded as (
     select inv.own as grp, inv.name, 1000000 - inv.invested as unspent
     from inv
-    where inv.invested < 1000000
+    where inv.student and inv.invested < 1000000
       and (inv.invested > 0
            or exists (select 1 from invest.presence p where p.course = c and p.name_key = inv.name_key))
   ),
@@ -277,14 +369,14 @@ language sql stable set search_path = '' as $$
     from gr
   ),
   pay as (
-    select inv.name, inv.own, inv.invested,
+    select inv.name, inv.own, inv.invested, inv.student,
            coalesce((select sum(va.amount * grm.mult) from va join grm on grm.grp = va.grp
                      where va.name_key = inv.name_key), 0) as payout
     from inv
     where inv.invested > 0
   ),
   pr as (
-    select pay.*, rank() over (order by pay.payout desc) as rnk from pay
+    select pay.*, rank() over (order by pay.payout desc) as rnk from pay where pay.student
   )
   select jsonb_build_object(
     'groups', coalesce((
@@ -303,6 +395,10 @@ language sql stable set search_path = '' as $$
                'unspent', 1000000 - pr.invested, 'payout', pr.payout, 'rank', pr.rnk)
              order by pr.rnk, pr.name collate "C")
       from pr), '[]'::jsonb),
+    'others', coalesce((
+      select jsonb_agg(jsonb_build_object('name', pay.name, 'invested', pay.invested, 'payout', pay.payout)
+             order by pay.payout desc, pay.name collate "C")
+      from pay where not pay.student), '[]'::jsonb),
     'rocket', coalesce((select jsonb_agg(grm.grp order by grm.ord) from grm where grm.rnk = 1), '[]'::jsonb),
     'stockGods', coalesce((select jsonb_agg(pr.name order by pr.name collate "C") from pr where pr.rnk = 1), '[]'::jsonb)
   )
@@ -385,20 +481,34 @@ begin
 end
 $$;
 
+-- 某組的公開資訊：slogan、封面版本、組員姓名（頒獎與暗盤輪播會顯示）
+create or replace function invest.group_public(c text, g text) returns jsonb
+language sql stable set search_path = '' as $$
+  select jsonb_build_object(
+    'slogan', coalesce((select gi.slogan from invest.group_info gi where gi.course = c and gi.grp = g), ''),
+    'coverVer', (select case when gi.cover is not null then gi.cover_ver end from invest.group_info gi where gi.course = c and gi.grp = g),
+    'memberNames', coalesce((select jsonb_agg(r.name order by r.name collate "C") from invest.roster r where r.course = c and r.grp = g), '[]'::jsonb)
+  )
+$$;
+
 create or replace function invest.public_course(c text) returns jsonb
 language plpgsql stable set search_path = '' as $$
 declare
   cs invest.course;
   hidden boolean;
+  shown boolean;
   tot jsonb;
   v_groups jsonb;
 begin
   select * into cs from invest.course where course = c;
-  hidden := cs.phase = 'dark';
-  if cs.phase = 'closed' and cs.results is not null then
+  -- 暗盤、以及封盤後頒獎揭曉前：各組金額與名次都不公開
+  shown := cs.phase = 'closed' and cs.results is not null and cs.revealed;
+  hidden := cs.phase = 'dark' or (cs.phase = 'closed' and not shown);
+  if shown then
     select coalesce(jsonb_agg(jsonb_build_object(
              'id', g ->> 'group', 'total', g -> 'final', 'rank', g -> 'rank',
              'members', (select count(*) from invest.roster ro where ro.course = c and ro.grp = g ->> 'group'))
+             || invest.group_public(c, g ->> 'group')
            order by invest.group_num(g ->> 'group') nulls last, (g ->> 'group') collate "C"), '[]'::jsonb)
       into v_groups
       from jsonb_array_elements(cs.results -> 'groups') g;
@@ -408,7 +518,7 @@ begin
              'id', x.grp,
              'total', case when hidden then null else x.v end,
              'rank', case when hidden then null else x.rk end,
-             'members', x.cnt)
+             'members', x.cnt) || invest.group_public(c, x.grp)
            order by x.ord), '[]'::jsonb)
       into v_groups
       from (
@@ -421,6 +531,7 @@ begin
   return jsonb_build_object(
     'course', c,
     'phase', cs.phase,
+    'revealed', shown,
     'openedAt', invest.ms(cs.opened_at),
     'darkAt', invest.ms(cs.dark_at),
     'darkEndsAt', invest.ms(cs.dark_ends_at),
@@ -432,8 +543,155 @@ begin
       select count(*) from invest.roster r
       where r.course = c
         and (select coalesce(sum(a.amount), 0) from invest.alloc a where a.course = c and a.name_key = r.name_key) = 1000000),
-    'results', case when cs.phase = 'closed' and cs.results is not null then invest.public_results(cs.results) end
+    'results', case when shown then invest.public_results(cs.results) end
   );
+end
+$$;
+
+-- ---------- 大螢幕舞台：頒獎與業師總結 ----------
+
+-- 頒獎的每一步（依兩場的封盤結果自動產生）：開場 → 每場（開場 → 第 3、2 名 → 第 1 名一飛沖天 → 股神 → 完整排名）→ 結束
+create or replace function invest.award_steps() returns jsonb
+language plpgsql stable set search_path = '' as $$
+declare
+  steps jsonb := jsonb_build_array(jsonb_build_object('kind', 'title', 'label', '頒獎典禮開場'));
+  c text;
+  cs invest.course;
+  r int;
+begin
+  foreach c in array array['wed', 'thu'] loop
+    select * into cs from invest.course co where co.course = c;
+    if cs.phase <> 'closed' or cs.results is null then continue; end if;
+    steps := steps || jsonb_build_array(jsonb_build_object('kind', 'intro', 'course', c, 'label', invest.course_label(c) || '：開場'));
+    for r in
+      select distinct (g ->> 'rank')::int as rk from jsonb_array_elements(cs.results -> 'groups') g
+      where (g ->> 'rank')::int <= 3 order by rk desc
+    loop
+      steps := steps || jsonb_build_array(jsonb_build_object(
+        'kind', case when r = 1 then 'rocket' else 'podium' end, 'course', c, 'rank', r,
+        'label', invest.course_label(c) || case when r = 1 then '：第 1 名・一飛沖天獎' else format('：第 %s 名', r) end));
+    end loop;
+    steps := steps || jsonb_build_array(
+      jsonb_build_object('kind', 'stockgod', 'course', c, 'label', invest.course_label(c) || '：股神獎'),
+      jsonb_build_object('kind', 'ranking', 'course', c, 'label', invest.course_label(c) || '：完整排名'));
+  end loop;
+  return steps || jsonb_build_array(jsonb_build_object('kind', 'finale', 'label', '頒獎結束'));
+end
+$$;
+
+create or replace function invest.award_scene(st jsonb) returns jsonb
+language plpgsql stable set search_path = '' as $$
+declare
+  c text := st ->> 'course';
+  cs invest.course;
+  v jsonb := st;
+begin
+  if c is not null then select * into cs from invest.course co where co.course = c; end if;
+  if st ->> 'kind' = 'intro' then
+    v := v || jsonb_build_object(
+      'groups', jsonb_array_length(cs.results -> 'groups'),
+      'investors', jsonb_array_length(cs.results -> 'investors'),
+      'students', (select count(*) from invest.roster r where r.course = c));
+  elsif st ->> 'kind' in ('podium', 'rocket') then
+    v := v || jsonb_build_object('groups', coalesce((
+      select jsonb_agg((g - 'deductions') || invest.group_public(c, g ->> 'group')
+                       order by invest.group_num(g ->> 'group') nulls last)
+      from jsonb_array_elements(cs.results -> 'groups') g
+      where (g ->> 'rank')::int = (st ->> 'rank')::int), '[]'::jsonb));
+  elsif st ->> 'kind' = 'stockgod' then
+    v := v || jsonb_build_object(
+      'winners', invest.public_results(cs.results) -> 'stockGods',
+      'investors', jsonb_array_length(cs.results -> 'investors'));
+  elsif st ->> 'kind' = 'ranking' then
+    v := v || jsonb_build_object('results', invest.public_results(cs.results));
+  elsif st ->> 'kind' = 'finale' then
+    v := v || jsonb_build_object('courses', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'course', co.course,
+               'rocket', co.results -> 'rocket',
+               'stockGods', invest.public_results(co.results) -> 'stockGods') order by co.course desc)
+      from invest.course co where co.phase = 'closed' and co.results is not null and co.revealed), '[]'::jsonb));
+  end if;
+  return v;
+end
+$$;
+
+-- 業師總結「數字回顧」頁
+create or replace function invest.recap() returns jsonb
+language sql stable set search_path = '' as $$
+  select coalesce(jsonb_agg(jsonb_build_object(
+           'course', co.course,
+           'students', (select count(*) from invest.roster r where r.course = co.course),
+           'joined', (select count(*) from invest.roster r where r.course = co.course and invest.is_present(co.course, r.name_key)),
+           'invested', (select coalesce(sum(a.amount), 0) from invest.alloc a where a.course = co.course),
+           'investors', (select count(distinct a.name_key) from invest.alloc a where a.course = co.course),
+           'rocket', case when co.revealed then co.results -> 'rocket' end,
+           'stockGods', case when co.revealed then invest.public_results(co.results) -> 'stockGods' end)
+         order by co.course desc), '[]'::jsonb)
+  from invest.course co
+$$;
+
+create or replace function invest.slide_scene(sl invest.slide) returns jsonb
+language sql stable set search_path = '' as $$
+  select jsonb_build_object(
+    'kind', sl.kind, 'id', sl.id, 'title', sl.title, 'subtitle', sl.subtitle, 'body', sl.body,
+    'imageVer', case when sl.image is not null then sl.image_ver end,
+    'label', coalesce(nullif(sl.title, ''), case sl.kind when 'recap' then '數字回顧' else '投影片' end))
+  || case when sl.kind = 'recap' then jsonb_build_object('recap', invest.recap()) else '{}'::jsonb end
+$$;
+
+-- 大螢幕目前要顯示的內容（公開）
+create or replace function invest.stage_public() returns jsonb
+language plpgsql stable set search_path = '' as $$
+declare
+  cfg invest.config;
+  steps jsonb;
+  n int;
+  i int;
+  sl invest.slide;
+begin
+  select * into cfg from invest.config c where c.id = 1;
+  if cfg.stage_mode = 'awards' then
+    steps := invest.award_steps();
+    n := jsonb_array_length(steps);
+    i := least(greatest(cfg.stage_step, 0), n - 1);
+    return jsonb_build_object('mode', 'awards', 'step', i, 'total', n, 'scene', invest.award_scene(steps -> i));
+  elsif cfg.stage_mode = 'summary' then
+    select count(*) into n from invest.slide;
+    if n = 0 then return jsonb_build_object('mode', 'market', 'step', 0, 'total', 0, 'scene', null); end if;
+    i := least(greatest(cfg.stage_step, 0), n - 1);
+    select * into sl from invest.slide order by pos, id offset i limit 1;
+    return jsonb_build_object('mode', 'summary', 'step', i, 'total', n, 'scene', invest.slide_scene(sl));
+  end if;
+  return jsonb_build_object('mode', 'market', 'step', 0, 'total', 0, 'scene', null);
+end
+$$;
+
+-- 管理員看的舞台狀態：多了每一步的名稱（「下一步：…」）
+create or replace function invest.admin_stage() returns jsonb
+language sql stable set search_path = '' as $$
+  select invest.stage_public() || jsonb_build_object(
+    'awardLabels', (select coalesce(jsonb_agg(s ->> 'label' order by o), '[]'::jsonb)
+                    from jsonb_array_elements(invest.award_steps()) with ordinality as x(s, o)),
+    'slideLabels', (select coalesce(jsonb_agg(invest.slide_scene(sl) ->> 'label' order by sl.pos, sl.id), '[]'::jsonb)
+                    from invest.slide sl))
+$$;
+
+-- 頒獎走到某場的「第 1 名」那一步，該場結果就公開（大螢幕、學生手機同步）；業師總結時全部公開
+create or replace function invest.apply_reveal() returns void
+language plpgsql volatile set search_path = '' as $$
+declare
+  cfg invest.config;
+begin
+  select * into cfg from invest.config c where c.id = 1;
+  if cfg.stage_mode = 'summary' then
+    update invest.course set revealed = true where phase = 'closed' and results is not null and not revealed;
+  elsif cfg.stage_mode = 'awards' then
+    update invest.course co set revealed = true
+     where co.phase = 'closed' and co.results is not null and not co.revealed
+       and exists (select 1 from jsonb_array_elements(invest.award_steps()) with ordinality as x(s, o)
+                   where x.s ->> 'kind' = 'rocket' and x.s ->> 'course' = co.course and x.o - 1 <= cfg.stage_step);
+  end if;
 end
 $$;
 
@@ -444,52 +702,66 @@ language sql volatile set search_path = '' as $$
     'now', invest.ms(clock_timestamp()),
     'active', cfg.active,
     'darkMs', cfg.dark_ms,
-    'courses', jsonb_build_object('wed', invest.public_course('wed'), 'thu', invest.public_course('thu'))
+    'courses', jsonb_build_object('wed', invest.public_course('wed'), 'thu', invest.public_course('thu')),
+    'stage', invest.stage_public()
   )
   from invest.config cfg where cfg.id = 1
 $$;
 
--- 某位學生的資料（只有自己的投資）
+-- 某個人的資料（只有自己的投資）。學生：名單上有的場次；業師、老師、訪客：兩場都有（沒有自己的組）
 create or replace function invest.me(k text) returns jsonb
 language plpgsql stable set search_path = '' as $$
 declare
   res jsonb := '{}'::jsonb;
   c text;
-  r record;
-  cs invest.course;
+  v_role text := invest.role_of(k);
+  v_own text;
   v_name text;
+  cs invest.course;
   v_alloc jsonb;
   v_inv numeric;
   v_result jsonb;
   v_ded numeric;
   inv jsonb;
 begin
+  select a.name into v_name from invest.account a where a.name_key = k;
   foreach c in array array['wed', 'thu'] loop
-    select ro.name, ro.grp into r from invest.roster ro where ro.course = c and ro.name_key = k;
-    if not found then continue; end if;
-    v_name := coalesce(v_name, r.name);
+    v_own := null;
+    if v_role = 'student' then
+      select ro.grp, coalesce(v_name, ro.name) into v_own, v_name from invest.roster ro where ro.course = c and ro.name_key = k;
+      if not found then continue; end if;
+    end if;
     select * into cs from invest.course co where co.course = c;
     select coalesce(jsonb_object_agg(a.grp, a.amount), '{}'::jsonb), coalesce(sum(a.amount), 0)
       into v_alloc, v_inv
       from invest.alloc a where a.course = c and a.name_key = k;
     v_result := null;
     v_ded := null;
-    if cs.phase = 'closed' and cs.results is not null then
-      select i into inv from jsonb_array_elements(cs.results -> 'investors') i where i ->> 'name' = r.name;
-      if inv is not null then
-        v_result := jsonb_build_object('payout', inv -> 'payout', 'rank', inv -> 'rank',
-                                       'of', jsonb_array_length(cs.results -> 'investors'));
+    -- 頒獎揭曉該場第一名之後才公開
+    if cs.phase = 'closed' and cs.results is not null and cs.revealed then
+      if v_role = 'student' then
+        select i into inv from jsonb_array_elements(cs.results -> 'investors') i where i ->> 'name' = v_name;
+        if inv is not null then
+          v_result := jsonb_build_object('payout', inv -> 'payout', 'rank', inv -> 'rank',
+                                         'of', jsonb_array_length(cs.results -> 'investors'));
+        end if;
+        select coalesce((
+          select (d ->> 'unspent')::numeric
+          from jsonb_array_elements(cs.results -> 'groups') g, jsonb_array_elements(g -> 'deductions') d
+          where g ->> 'group' = v_own and d ->> 'name' = v_name), 0) into v_ded;
+      else
+        select i into inv from jsonb_array_elements(cs.results -> 'others') i where i ->> 'name' = v_name;
+        if inv is not null then
+          v_result := jsonb_build_object('payout', inv -> 'payout', 'rank', null, 'of', null);
+        end if;
       end if;
-      select coalesce((
-        select (d ->> 'unspent')::numeric
-        from jsonb_array_elements(cs.results -> 'groups') g, jsonb_array_elements(g -> 'deductions') d
-        where g ->> 'group' = r.grp and d ->> 'name' = r.name), 0) into v_ded;
     end if;
     res := res || jsonb_build_object(c, jsonb_build_object(
-      'course', c, 'group', r.grp, 'alloc', v_alloc, 'invested', v_inv,
-      'remaining', 1000000 - v_inv, 'result', v_result, 'deducted', v_ded));
+      'course', c, 'group', v_own, 'alloc', v_alloc, 'invested', v_inv,
+      'remaining', 1000000 - v_inv, 'result', v_result, 'deducted', v_ded,
+      'awaiting', cs.phase = 'closed' and not cs.revealed));
   end loop;
-  return jsonb_build_object('name', v_name, 'courses', res);
+  return jsonb_build_object('name', v_name, 'role', v_role, 'courses', res);
 end
 $$;
 
@@ -501,7 +773,8 @@ language sql stable set search_path = '' as $$
   join invest.course cs on cs.course = h.course
   where h.course = c
     and h.id >= coalesce(after_id, 0)
-    and (cs.phase <> 'dark' or cs.dark_history_id is null or h.id <= cs.dark_history_id)
+    and (cs.phase not in ('dark', 'closed') or cs.revealed or cs.dark_history_id is null or h.id <= cs.dark_history_id)
+    and (h.mark is distinct from 'close' or cs.revealed)
 $$;
 
 create or replace function invest.admin_course(c text) returns jsonb
@@ -542,7 +815,26 @@ language sql stable set search_path = '' as $$
       'wed', (select jsonb_build_object('students', count(distinct a.name_key), 'weeks', count(distinct a.week))
               from invest.attendance a where a.course = 'wed'),
       'thu', (select jsonb_build_object('students', count(distinct a.name_key), 'weeks', count(distinct a.week))
-              from invest.attendance a where a.course = 'thu'))
+              from invest.attendance a where a.course = 'thu')),
+    'stage', invest.admin_stage(),
+    'groupInfo', jsonb_build_object(
+      'wed', (select coalesce(jsonb_agg(jsonb_build_object('group', u.g, 'slogan', coalesce(gi.slogan, ''),
+                'coverVer', case when gi.cover is not null then gi.cover_ver end) order by u.o), '[]'::jsonb)
+              from unnest(invest.groups('wed')) with ordinality as u(g, o)
+              left join invest.group_info gi on gi.course = 'wed' and gi.grp = u.g),
+      'thu', (select coalesce(jsonb_agg(jsonb_build_object('group', u.g, 'slogan', coalesce(gi.slogan, ''),
+                'coverVer', case when gi.cover is not null then gi.cover_ver end) order by u.o), '[]'::jsonb)
+              from unnest(invest.groups('thu')) with ordinality as u(g, o)
+              left join invest.group_info gi on gi.course = 'thu' and gi.grp = u.g)),
+    'slides', (select coalesce(jsonb_agg(jsonb_build_object('id', sl.id, 'kind', sl.kind, 'title', sl.title,
+                 'subtitle', sl.subtitle, 'body', sl.body,
+                 'imageVer', case when sl.image is not null then sl.image_ver end) order by sl.pos, sl.id), '[]'::jsonb)
+               from invest.slide sl),
+    'accounts', (select coalesce(jsonb_agg(jsonb_build_object('name', a.name, 'role', a.role,
+                   'hasPassword', a.pw_hash is not null, 'locked', a.locked_until is not null and a.locked_until > now())
+                   order by case a.role when 'student' then 0 when 'mentor' then 1 else 2 end, a.name collate "C"), '[]'::jsonb)
+                 from invest.account a
+                 where a.role <> 'student' or exists (select 1 from invest.roster r where r.name_key = a.name_key))
   )
   from invest.config cfg where cfg.id = 1
 $$;
@@ -621,19 +913,61 @@ begin
 end
 $$;
 
--- 登入／重新整理自己的資料；同時記錄「出席目前這一場」
-create or replace function public.invest_me(name text) returns jsonb
+-- 登入：姓名＋密碼（學生＝生日後四碼；業師、老師、訪客預設 TNDA）→ 發給手機一個憑證 token
+-- 舊版用姓名直接登入的函式移除（參數名稱改了，要先 drop）
+drop function if exists public.invest_me(text);
+drop function if exists public.invest_invest(text, text, text, numeric);
+
+create or replace function public.invest_login(name text, password text) returns jsonb
 language plpgsql volatile security definer set search_path = '' as $$
 declare
   v_input text := name;
-  v_key text := invest.name_key(v_input);
+  v_key text := invest.name_key(name);
+  v_pw text := password;
+  acc invest.account;
+  v_token text;
   v_active text;
 begin
-  if length(coalesce(v_input, '')) > 100
-     or not exists (select 1 from invest.roster r where r.name_key = v_key) then
-    return invest.err('not_in_roster',
-      format('名單中找不到「%s」，請確認姓名或洽助教', left(invest.norm_name(v_input), 40)));
+  if length(coalesce(v_input, '')) > 100 or length(coalesce(v_pw, '')) > 100 then
+    return invest.err('bad_login', '姓名或密碼太長');
   end if;
+  select * into acc from invest.account a where a.name_key = v_key for update;
+  if not found or (acc.role = 'student' and not exists (select 1 from invest.roster r where r.name_key = v_key)) then
+    return invest.err('not_in_roster', format('名單中找不到「%s」，請確認姓名或洽助教', left(invest.norm_name(v_input), 40)));
+  end if;
+  if acc.pw_hash is null then
+    return invest.err('no_password', '這個帳號還沒設定密碼，請洽助教');
+  end if;
+  if acc.locked_until is not null and acc.locked_until > now() then
+    return invest.err('locked', '密碼錯太多次，請 1 分鐘後再試，或洽助教');
+  end if;
+  if invest.pw_hash(acc.salt, coalesce(v_pw, '')) <> acc.pw_hash then
+    update invest.account
+       set fails = case when acc.fails + 1 >= 5 then 0 else acc.fails + 1 end,
+           locked_until = case when acc.fails + 1 >= 5 then now() + interval '1 minute' end
+     where name_key = v_key;
+    return invest.err('bad_password',
+      case when acc.role = 'student' then '密碼錯誤：學生密碼是生日後四碼（例如 4 月 3 日 → 0403）'
+           else '密碼錯誤，請洽助教' end);
+  end if;
+  update invest.account set fails = 0, locked_until = null where name_key = v_key;
+  v_token := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
+  insert into invest.session (token, name_key) values (v_token, v_key);
+  select cfg.active into v_active from invest.config cfg where cfg.id = 1;
+  perform invest.expire_due(v_active);
+  perform invest.mark_present(v_active, v_key);
+  return jsonb_build_object('token', v_token, 'me', invest.me(v_key));
+end
+$$;
+
+-- 重新整理自己的資料；同時記錄「出席目前這一場」（手機每 15 秒一次）
+create or replace function public.invest_me(token text) returns jsonb
+language plpgsql volatile security definer set search_path = '' as $$
+declare
+  v_key text := invest.session_key(token);
+  v_active text;
+begin
+  if v_key is null then return invest.err('bad_session', '登入已失效，請重新登入'); end if;
   select cfg.active into v_active from invest.config cfg where cfg.id = 1;
   perform invest.expire_due(v_active);
   perform invest.mark_present(v_active, v_key);
@@ -642,27 +976,32 @@ end
 $$;
 
 -- 下單：把某組的投資設成 amount（絕對值）。所有規則在這裡驗證
-create or replace function public.invest_invest(name text, course text, grp text, amount numeric) returns jsonb
+create or replace function public.invest_invest(token text, course text, grp text, amount numeric) returns jsonb
 language plpgsql volatile security definer set search_path = '' as $$
 declare
-  v_key text := invest.name_key(name);
+  v_key text := invest.session_key(token);
   v_course text := course;
   v_grp text := grp;
   v_amount numeric := amount;
+  v_role text;
   v_own text;
   cs invest.course;
   v_others numeric;
   v_current numeric;
 begin
+  if v_key is null then return invest.err('bad_session', '登入已失效，請重新登入'); end if;
   if v_course is null or v_course not in ('wed', 'thu') then
     return invest.err('bad_course', '場次錯誤');
   end if;
-  if not exists (select 1 from invest.roster r where r.name_key = v_key) then
-    return invest.err('not_in_roster', '名單中找不到這個名字，請確認姓名或洽助教');
-  end if;
-  select r.grp into v_own from invest.roster r where r.course = v_course and r.name_key = v_key;
-  if v_own is null then
-    return invest.err('not_in_course', format('你不在%s的名單中', invest.course_label(v_course)));
+  v_role := invest.role_of(v_key);
+  if v_role = 'student' then
+    if not exists (select 1 from invest.roster r where r.name_key = v_key) then
+      return invest.err('not_in_roster', '名單中找不到這個名字，請確認姓名或洽助教');
+    end if;
+    select r.grp into v_own from invest.roster r where r.course = v_course and r.name_key = v_key;
+    if v_own is null then
+      return invest.err('not_in_course', format('你不在%s的名單中', invest.course_label(v_course)));
+    end if;
   end if;
 
   perform invest.expire_due(v_course);
@@ -674,7 +1013,7 @@ begin
   if v_grp is null or not (v_grp = any (invest.groups(v_course))) then
     return invest.err('unknown_group', '沒有這個組別');
   end if;
-  if v_grp = v_own then return invest.err('own_group', '不能投資自己那組'); end if;
+  if v_own is not null and v_grp = v_own then return invest.err('own_group', '不能投資自己那組'); end if;
   if v_amount is null or v_amount < 0 or v_amount <> trunc(v_amount) then
     return invest.err('bad_amount', '金額必須是 0 以上的整數');
   end if;
@@ -693,7 +1032,9 @@ begin
       insert into invest.alloc (course, name_key, grp, amount) values (v_course, v_key, v_grp, v_amount::bigint)
       on conflict on constraint alloc_pkey do update set amount = excluded.amount;
     end if;
-    insert into invest.presence (course, name_key) values (v_course, v_key) on conflict do nothing;
+    if v_role = 'student' then
+      insert into invest.presence (course, name_key) values (v_course, v_key) on conflict do nothing;
+    end if;
     perform invest.record_point(v_course, null);
     perform invest.bump();
   end if;
@@ -780,12 +1121,12 @@ begin
       update invest.course
          set phase = 'dark',
              dark_ends_at = now() + make_interval(secs => cs.dark_left_ms / 1000.0),
-             results = null, closed_at = null, closed_from = null, dark_left_ms = null
+             results = null, closed_at = null, closed_from = null, dark_left_ms = null, revealed = false
        where invest.course.course = v_course;
     else
       update invest.course
          set phase = 'open', dark_at = null, dark_ends_at = null, dark_history_id = null,
-             results = null, closed_at = null, closed_from = null, dark_left_ms = null
+             results = null, closed_at = null, closed_from = null, dark_left_ms = null, revealed = false
        where invest.course.course = v_course;
     end if;
 
@@ -812,7 +1153,7 @@ begin
   delete from invest.presence p where p.course = v_course;
   update invest.course
      set phase = 'pending', opened_at = null, dark_at = null, dark_ends_at = null, closed_at = null,
-         dark_history_id = null, closed_from = null, dark_left_ms = null, results = null
+         dark_history_id = null, closed_from = null, dark_left_ms = null, results = null, revealed = false
    where invest.course.course = v_course;
   perform invest.bump();
   return invest.admin_overview();
@@ -919,6 +1260,7 @@ begin
     delete from invest.roster r where r.course = any (v_courses);
     insert into invest.roster (course, name_key, name, grp)
     select x ->> 'course', x ->> 'key', x ->> 'name', x ->> 'group' from jsonb_array_elements(v_clean) x;
+    perform invest.ensure_student_accounts();
     foreach c in array v_courses loop
       v_groups := invest.groups(c);
       delete from invest.alloc a
@@ -1052,6 +1394,240 @@ begin
 end
 $$;
 
+-- ---------- 大螢幕舞台控制（頒獎、業師總結） ----------
+
+-- 封面照片與投影片圖片另外抓（檔案大，不放在每 0.7 秒查詢一次的狀態裡）
+create or replace function public.invest_group_cover(course text, grp text) returns jsonb
+language sql stable security definer set search_path = '' as $$
+  select jsonb_build_object('cover', (select gi.cover from invest.group_info gi where gi.course = $1 and gi.grp = $2))
+$$;
+
+create or replace function public.invest_slide_image(id bigint) returns jsonb
+language sql stable security definer set search_path = '' as $$
+  select jsonb_build_object('image', (select sl.image from invest.slide sl where sl.id = $1))
+$$;
+
+-- action：market（盤況）／awards（從頭開始頒獎）／summary（從頭開始業師總結）／next／prev／goto（step）
+create or replace function public.invest_admin_stage(pw text, action text, step int default null) returns jsonb
+language plpgsql volatile security definer set search_path = '' as $$
+declare
+  v_action text := action;
+  v_step int := step;
+  cfg invest.config;
+  n int;
+begin
+  if not invest.check_admin(pw) then return invest.err('unauthorized', '管理員密碼錯誤'); end if;
+  perform invest.expire_due('wed');
+  perform invest.expire_due('thu');
+  select * into cfg from invest.config c where c.id = 1 for update;
+  if v_action in ('market', 'awards', 'summary') then
+    if v_action = 'summary' and not exists (select 1 from invest.slide) then
+      return invest.err('no_slides', '還沒有任何總結投影片');
+    end if;
+    update invest.config set stage_mode = v_action, stage_step = 0 where id = 1;
+  elsif v_action in ('next', 'prev', 'goto') then
+    if cfg.stage_mode = 'market' then return invest.err('bad_stage', '目前是盤況畫面，請先開始頒獎或業師總結'); end if;
+    if cfg.stage_mode = 'awards' then n := jsonb_array_length(invest.award_steps());
+    else select count(*) into n from invest.slide; end if;
+    update invest.config
+       set stage_step = least(greatest(case v_action when 'next' then cfg.stage_step + 1
+                                                     when 'prev' then cfg.stage_step - 1
+                                                     else coalesce(v_step, cfg.stage_step) end, 0), n - 1)
+     where id = 1;
+  else
+    return invest.err('bad_action', '未知的操作');
+  end if;
+  perform invest.apply_reveal();
+  perform invest.bump();
+  return invest.admin_overview();
+end
+$$;
+
+-- 各組作品：slogan 與封面（cover = 'data:image/jpeg;base64,…'；clear_cover = true 刪除封面）
+create or replace function public.invest_admin_group(pw text, course text, grp text, slogan text default null,
+                                                     cover text default null, clear_cover boolean default false) returns jsonb
+language plpgsql volatile security definer set search_path = '' as $$
+declare
+  v_course text := course;
+  v_grp text := grp;
+  v_slogan text := slogan;
+  v_cover text := cover;
+begin
+  if not invest.check_admin(pw) then return invest.err('unauthorized', '管理員密碼錯誤'); end if;
+  if v_course is null or v_course not in ('wed', 'thu') then return invest.err('bad_course', '場次錯誤'); end if;
+  if v_grp is null or not (v_grp = any (invest.groups(v_course))) then return invest.err('unknown_group', '沒有這個組別'); end if;
+  if v_slogan is not null and length(v_slogan) > 200 then return invest.err('too_long', 'slogan 最多 200 字'); end if;
+  if v_cover is not null and (v_cover !~ '^data:image/(jpeg|png|webp);base64,' or length(v_cover) > 3000000) then
+    return invest.err('bad_cover', '封面必須是 JPEG／PNG／WebP 圖片，而且不能超過 2 MB');
+  end if;
+  insert into invest.group_info (course, grp) values (v_course, v_grp) on conflict do nothing;
+  update invest.group_info gi
+     set slogan = coalesce(btrim(v_slogan), gi.slogan),
+         cover = case when coalesce(clear_cover, false) then null else coalesce(v_cover, gi.cover) end,
+         cover_ver = gi.cover_ver + case when v_cover is not null or coalesce(clear_cover, false) then 1 else 0 end
+   where gi.course = v_course and gi.grp = v_grp;
+  perform invest.bump();
+  return invest.admin_overview();
+end
+$$;
+
+-- 業師總結投影片：整份取代。slides = [{id?, kind: title|text|recap, title, subtitle, body, image?}]
+-- image 欄位沒給 → 保留原本的圖；給 null → 刪除；給 data URL → 換圖
+create or replace function public.invest_admin_slides(pw text, slides jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = '' as $$
+declare
+  v_slides jsonb := slides;
+  e jsonb;
+  i int := 0;
+  v_id bigint;
+  v_keep bigint[] := '{}';
+begin
+  if not invest.check_admin(pw) then return invest.err('unauthorized', '管理員密碼錯誤'); end if;
+  if v_slides is null or jsonb_typeof(v_slides) <> 'array' or jsonb_array_length(v_slides) > 60 then
+    return invest.err('bad_slides', '投影片格式錯誤（最多 60 頁）');
+  end if;
+  for e in select x from jsonb_array_elements(v_slides) x loop
+    if coalesce(e ->> 'kind', 'text') not in ('title', 'text', 'recap') then return invest.err('bad_slides', '投影片類型錯誤'); end if;
+    if length(coalesce(e ->> 'title', '')) > 200 or length(coalesce(e ->> 'subtitle', '')) > 300 or length(coalesce(e ->> 'body', '')) > 3000 then
+      return invest.err('too_long', '投影片文字太長');
+    end if;
+    if e ? 'image' and e ->> 'image' is not null
+       and ((e ->> 'image') !~ '^data:image/(jpeg|png|webp);base64,' or length(e ->> 'image') > 3000000) then
+      return invest.err('bad_image', '圖片必須是 JPEG／PNG／WebP，而且不能超過 2 MB');
+    end if;
+  end loop;
+  for e in select x from jsonb_array_elements(v_slides) x loop
+    i := i + 1;
+    v_id := nullif(e ->> 'id', '')::bigint;
+    if v_id is null or not exists (select 1 from invest.slide sl where sl.id = v_id) then
+      insert into invest.slide (pos, kind, title, subtitle, body) values (i, coalesce(e ->> 'kind', 'text'), '', '', '')
+      returning invest.slide.id into v_id;
+    end if;
+    update invest.slide sl
+       set pos = i, kind = coalesce(e ->> 'kind', 'text'),
+           title = coalesce(e ->> 'title', ''), subtitle = coalesce(e ->> 'subtitle', ''), body = coalesce(e ->> 'body', ''),
+           image = case when e ? 'image' then e ->> 'image' else sl.image end,
+           image_ver = sl.image_ver + case when e ? 'image' then 1 else 0 end
+     where sl.id = v_id;
+    v_keep := v_keep || v_id;
+  end loop;
+  delete from invest.slide sl where not (sl.id = any (v_keep));
+  perform invest.bump();
+  return invest.admin_overview();
+end
+$$;
+
+-- 帳號：entries = [{name, role: student|mentor|guest, password?}]
+-- student：名單上要有這個人，設定密碼（生日後四碼）；mentor／guest：沒有就建立（密碼沒給 → TNDA），有就改密碼
+create or replace function public.invest_admin_account_save(pw text, entries jsonb, apply boolean default false) returns jsonb
+language plpgsql volatile security definer set search_path = '' as $$
+declare
+  v_apply boolean := coalesce(apply, false);
+  v_errors text[] := '{}';
+  e jsonb;
+  i int := 0;
+  v_name text;
+  v_key text;
+  v_role text;
+  v_pw text;
+  acc invest.account;
+  v_created int := 0;
+  v_updated int := 0;
+begin
+  if not invest.check_admin(pw) then return invest.err('unauthorized', '管理員密碼錯誤'); end if;
+  if entries is null or jsonb_typeof(entries) <> 'array' then return invest.err('bad_accounts', '帳號格式錯誤'); end if;
+  perform invest.ensure_student_accounts();
+  for e in select x from jsonb_array_elements(entries) x loop
+    i := i + 1;
+    v_name := invest.norm_name(e ->> 'name');
+    v_key := invest.name_key(v_name);
+    v_role := coalesce(e ->> 'role', 'student');
+    v_pw := nullif(invest.norm_name(e ->> 'password'), '');
+    if v_name = '' or length(v_name) > 40 then v_errors := v_errors || format('第 %s 筆：姓名是空的或太長', i); continue; end if;
+    if v_role not in ('student', 'mentor', 'guest') then v_errors := v_errors || format('第 %s 筆：身分錯誤', i); continue; end if;
+    if v_pw is not null and length(v_pw) > 40 then v_errors := v_errors || format('第 %s 筆：密碼太長', i); continue; end if;
+    select * into acc from invest.account a where a.name_key = v_key;
+    if v_role = 'student' then
+      if not exists (select 1 from invest.roster r where r.name_key = v_key) then
+        v_errors := v_errors || format('第 %s 筆：「%s」不在學生名單上', i, v_name); continue;
+      end if;
+      if v_pw is null then v_errors := v_errors || format('第 %s 筆：「%s」沒有密碼', i, v_name); continue; end if;
+      if v_apply then perform invest.set_password(v_key, v_pw); end if;
+      v_updated := v_updated + 1;
+    else
+      if found and acc.role = 'student' then
+        v_errors := v_errors || format('第 %s 筆：「%s」是學生，不能改成業師或訪客', i, v_name); continue;
+      end if;
+      if not found then
+        if v_apply then
+          insert into invest.account (name_key, name, role) values (v_key, v_name, v_role);
+          perform invest.set_password(v_key, coalesce(v_pw, 'TNDA'));
+        end if;
+        v_created := v_created + 1;
+      else
+        if v_apply then
+          update invest.account set role = v_role, name = v_name where name_key = v_key;
+          if v_pw is not null then perform invest.set_password(v_key, v_pw); end if;
+        end if;
+        v_updated := v_updated + 1;
+      end if;
+    end if;
+  end loop;
+  if v_apply and coalesce(array_length(v_errors, 1), 0) = 0 then perform invest.bump(); end if;
+  return jsonb_build_object(
+    'ok', coalesce(array_length(v_errors, 1), 0) = 0,
+    'applied', v_apply,
+    'errors', to_jsonb(v_errors[1:30]),
+    'created', v_created,
+    'updated', v_updated);
+end
+$$;
+
+-- 刪除業師／訪客帳號（連同他的投資）；學生帳號跟著名單，不能在這裡刪
+create or replace function public.invest_admin_account_delete(pw text, name text) returns jsonb
+language plpgsql volatile security definer set search_path = '' as $$
+declare
+  v_key text := invest.name_key(name);
+  c text;
+begin
+  if not invest.check_admin(pw) then return invest.err('unauthorized', '管理員密碼錯誤'); end if;
+  if not exists (select 1 from invest.account a where a.name_key = v_key and a.role <> 'student') then
+    return invest.err('not_found', '找不到這個業師／訪客帳號');
+  end if;
+  foreach c in array array['wed', 'thu'] loop
+    if exists (select 1 from invest.course co where co.course = c and co.phase = 'closed')
+       and exists (select 1 from invest.alloc a where a.course = c and a.name_key = v_key) then
+      return invest.err('closed', '這個帳號在已封盤的場次有投資，結果已凍結，不能刪除');
+    end if;
+  end loop;
+  delete from invest.alloc a where a.name_key = v_key;
+  delete from invest.session s where s.name_key = v_key;
+  delete from invest.account a where a.name_key = v_key;
+  foreach c in array array['wed', 'thu'] loop
+    if exists (select 1 from invest.course co where co.course = c and co.phase in ('open', 'dark')) then
+      perform invest.record_point(c, null);
+    end if;
+  end loop;
+  perform invest.bump();
+  return invest.admin_overview();
+end
+$$;
+
+-- ---------- 預設資料 ----------
+select invest.ensure_student_accounts();
+-- 5 個訪客帳號 TNDA1～TNDA5（密碼 TNDA）
+insert into invest.account (name_key, name, role)
+select lower('TNDA' || n), 'TNDA' || n, 'guest' from generate_series(1, 5) n
+on conflict (name_key) do nothing;
+select invest.set_password(a.name_key, 'TNDA') from invest.account a where a.role = 'guest' and a.pw_hash is null;
+-- 業師總結的預設投影片（之後在管理員頁修改）
+insert into invest.slide (pos, kind, title, subtitle, body)
+select v.pos, v.kind, v.title, v.subtitle, v.body
+from (values (1, 'title', '業師總結', '一場體驗如何發生 × VSAI 互動機台原型實戰', ''),
+             (2, 'recap', '數字回顧', '', ''),
+             (3, 'text', '謝謝大家', 'TNDA · Next D', '')) as v(pos, kind, title, subtitle, body)
+where not exists (select 1 from invest.slide);
+
 -- ---------- 權限：網頁（anon）只能呼叫上面的 RPC ----------
 
 revoke all on all tables in schema invest from public;
@@ -1066,7 +1642,10 @@ begin
     'invest_invest(text, text, text, numeric)', 'invest_admin_check(text)', 'invest_admin_overview(text)',
     'invest_admin_set_active(text, text)', 'invest_admin_phase(text, text, text)', 'invest_admin_reset(text, text)',
     'invest_admin_roster(text, jsonb, boolean)', 'invest_admin_results(text, text)',
-    'invest_intro_board()', 'invest_admin_attendance(text, jsonb, boolean)', 'invest_admin_board(text, boolean)'
+    'invest_intro_board()', 'invest_admin_attendance(text, jsonb, boolean)', 'invest_admin_board(text, boolean)',
+    'invest_login(text, text)', 'invest_group_cover(text, text)', 'invest_slide_image(bigint)',
+    'invest_admin_stage(text, text, integer)', 'invest_admin_group(text, text, text, text, text, boolean)',
+    'invest_admin_slides(text, jsonb)', 'invest_admin_account_save(text, jsonb, boolean)', 'invest_admin_account_delete(text, text)'
   ] loop
     execute format('revoke all on function public.%s from public', fn);
     select exists (select 1 from pg_roles where rolname = 'anon') into has_role;

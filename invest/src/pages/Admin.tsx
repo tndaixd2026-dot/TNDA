@@ -14,6 +14,7 @@ import {
 } from '../../shared/types.ts';
 import { resultsCsv } from '../../shared/csv.ts';
 import { parseAttendanceCsv } from '../../shared/attendance.ts';
+import { AccountsCard, GroupsCard, SlidesCard, StageCard } from './AdminEvent.tsx';
 import { ApiError, rpc, storageGet, storageSet, useLive, useNow } from '../api.ts';
 import { Card, ConnectionDot, Eyebrow, Logo, PhaseBadge, THEME, useToast } from '../ui/common.tsx';
 
@@ -161,14 +162,14 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
     const msg = {
       open: `${courseLabel(course)}開盤？開盤後學生就能開始投資。`,
       dark: `進入暗盤？${darkLabel}後自動封盤，期間大螢幕與學生端都會隱藏各組金額與排名。`,
-      close: `立即封盤並揭曉${courseLabel(course)}的結果？封盤後無法再投資。`,
+      close: `立即封盤${courseLabel(course)}？封盤後無法再投資，結果會在頒獎時揭曉。`,
       reopen: `取消封盤？已揭曉的結果會撤回，回到「${reopenLabel}」，所有人的投資都保留。`,
     }[action];
     if (!confirm(msg)) return;
     void act(
       'invest_admin_phase',
       { course, action },
-      { open: '已開盤', dark: '已進入暗盤', close: '已封盤，結果已揭曉', reopen: `已取消封盤，回到${reopenLabel}` }[action],
+      { open: '已開盤', dark: '已進入暗盤', close: '已封盤，等待頒獎揭曉', reopen: `已取消封盤，回到${reopenLabel}` }[action],
     );
   }
 
@@ -213,6 +214,8 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
           </button>
         </nav>
       </header>
+
+      <StageCard ov={ov} act={act} busy={busy} />
 
       <Card>
         <h2 class="card-title">
@@ -309,6 +312,12 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
       </Card>
 
       <RosterCard ov={ov} pw={pw} onApplied={(next) => setOv(next)} notify={toast.show} />
+
+      <GroupsCard ov={ov} act={act} busy={busy} notify={toast.show} />
+
+      <AccountsCard ov={ov} pw={pw} onChanged={refresh} notify={toast.show} />
+
+      <SlidesCard ov={ov} act={act} busy={busy} notify={toast.show} />
 
       <BoardCard ov={ov} pw={pw} onChanged={(next) => setOv(next)} notify={toast.show} />
 

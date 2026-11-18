@@ -46,3 +46,12 @@ export function seedAttendance(): AttendanceSeed[] {
   }
   return out;
 }
+
+/** 假的各組 slogan（本機版展示用） */
+export function seedSlogans(): Record<string, string> {
+  const words = ['讓每一次觸碰都被看見', '把城市的聲音變成光', '一起慢下來的互動裝置', '你的心跳就是遙控器', '看見看不見的風', '會回應你的牆', '把回憶折成紙飛機'];
+  const out: Record<string, string> = {};
+  for (let i = 1; i <= 5; i++) out[`wed|第${i}組`] = words[i - 1];
+  for (let i = 1; i <= 7; i++) out[`thu|第${i}組`] = words[(i + 2) % 7];
+  return out;
+}

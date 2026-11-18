@@ -55,7 +55,7 @@ interface Unchanged {
 export interface Live {
   pub: PublicState | null;
   me: MeState | null;
-  /** 名字不在名單上（例如名單更新了） */
+  /** 登入失效（名單或密碼更新了）→ 回到登入頁 */
   meError: ApiError | null;
   history: HistoryMap | null;
   /** 伺服器時間 − 本機時間 */
@@ -66,7 +66,7 @@ export interface Live {
 
 /** 盤況有沒有「階段性」變化（換場、開盤、暗盤、封盤、取消封盤、重置） */
 function phaseKey(s: PublicState): string {
-  const c = (x: PublicState['courses']['wed']) => `${x.phase}:${x.darkEndsAt ?? ''}:${x.closedAt ?? ''}`;
+  const c = (x: PublicState['courses']['wed']) => `${x.phase}:${x.darkEndsAt ?? ''}:${x.closedAt ?? ''}:${x.revealed}`;
   return `${s.active}|${c(s.courses.wed)}|${c(s.courses.thu)}`;
 }
 
@@ -83,11 +83,11 @@ function mergePoints(old: HistoryPoint[], fresh: HistoryPoint[]): HistoryPoint[]
 
 /**
  * 定時查詢公開狀態。
- * - name：學生端，另外取得自己的投資，並每 15 秒回報一次「我在線上」（出席紀錄）
+ * - token：學生端（登入後拿到的憑證），另外取得自己的投資，並每 15 秒回報一次「我在線上」（出席紀錄）
  * - history：大螢幕，另外取得走勢
  * - intervalMs：查詢間隔（大螢幕 0.7 秒、學生與管理員 2 秒）
  */
-export function useLive(opts: { name?: string | null; history?: boolean; intervalMs?: number }): Live {
+export function useLive(opts: { token?: string | null; history?: boolean; intervalMs?: number }): Live {
   const [pub, setPub] = useState<PublicState | null>(null);
   const [me, setMe] = useState<MeState | null>(null);
   const [meError, setMeError] = useState<ApiError | null>(null);
@@ -111,12 +111,12 @@ export function useLive(opts: { name?: string | null; history?: boolean; interva
     };
 
     async function refreshMe() {
-      if (!opts.name) return;
+      if (!opts.token) return;
       try {
-        setMe(await rpc<MeState>('invest_me', { name: opts.name }));
+        setMe(await rpc<MeState>('invest_me', { token: opts.token }));
         setMeError(null);
       } catch (err) {
-        if (err instanceof ApiError && err.code === 'not_in_roster') setMeError(err);
+        if (err instanceof ApiError && (err.code === 'bad_session' || err.code === 'not_in_roster')) setMeError(err);
       }
     }
 
@@ -156,7 +156,7 @@ export function useLive(opts: { name?: string | null; history?: boolean; interva
 
     void poll();
     void refreshMe();
-    const heartbeat = opts.name ? setInterval(() => void refreshMe(), 15_000) : null;
+    const heartbeat = opts.token ? setInterval(() => void refreshMe(), 15_000) : null;
     const onVisible = () => {
       if (document.visibilityState === 'visible') {
         void poll();
@@ -173,7 +173,7 @@ export function useLive(opts: { name?: string | null; history?: boolean; interva
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('online', onVisible);
     };
-  }, [opts.name, opts.history, interval]);
+  }, [opts.token, opts.history, interval]);
 
   return { pub, me, meError, history, offset, connected, setMe };
 }
