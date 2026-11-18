@@ -149,9 +149,10 @@ describe('登入與名單', () => {
 });
 
 describe('投資規則（全部在資料庫端驗證）', () => {
-  it('不能投自己那組，也不能投其他堂課或不存在的組', async () => {
+  it('可以投自己那組；不能投其他堂課或不存在的組', async () => {
     await phase('wed', 'open');
-    expect((await invest('甲', '第1組', 10 * W)).error).toBe('own_group');
+    expect((await invest('甲', '第1組', 10 * W)).error).toBeUndefined();
+    expect((await invest('甲', '第1組', 0)).error).toBeUndefined();
     expect((await invest('甲', '第9組', 10 * W)).error).toBe('unknown_group');
     expect((await invest('丁', '第2組', 10 * W)).error).toBe('not_in_course');
     expect((await invest('路人', '第2組', 10 * W)).error).toBe('not_in_roster');
@@ -231,10 +232,10 @@ describe('投資規則（全部在資料庫端驗證）', () => {
     let m = await me('甲');
     expect(m.courses.wed?.remaining).toBe(0);
     expect(m.courses.thu).toMatchObject({ remaining: 100 * W, alloc: {} });
-    // 週四甲是第2組：可以投第1、3組，不能投第2組（週三的第2組卻可以投）
+    // 週四的錢包另外算：投完週四的 100 萬後，再投就餘額不足（週三的錢不能拿來用）
     expect((await invest('甲', '第1組', 50 * W, 'thu')).error).toBeUndefined();
     expect((await invest('甲', '第3組', 50 * W, 'thu')).error).toBeUndefined();
-    expect((await invest('甲', '第2組', 10 * W, 'thu')).error).toBe('own_group');
+    expect((await invest('甲', '第2組', 10 * W, 'thu')).error).toBe('over_budget');
     m = await me('甲');
     expect(m.courses.wed).toMatchObject({ group: '第1組', alloc: { 第2組: 50 * W, 第3組: 50 * W }, remaining: 0 });
     expect(m.courses.thu).toMatchObject({ group: '第2組', alloc: { 第1組: 50 * W, 第3組: 50 * W }, remaining: 0 });
@@ -396,7 +397,8 @@ describe('封盤結算', () => {
         if (roll < 0.3) continue; // 出席但沒投
         let left = BUDGET;
         for (const g of groups) {
-          if (g === m.group || left === 0) continue;
+          // 有時候也投自己那組（只算股神獎）
+          if ((g === m.group && rand() < 0.6) || left === 0) continue;
           // 金額有整萬、也有零碎到 1 元的
           const amount = Math.min(left, rand() < 0.5 ? Math.floor(rand() * 6) * 10 * W : Math.floor(rand() * 50 * W));
           if (amount === 0) continue;
@@ -433,6 +435,30 @@ describe('登入身分', () => {
     expect((await me('乙')).name).toBe('乙');
     expect((await me('丁')).name).toBe('丁');
     expect((await me('甲')).name).toBe('甲');
+  });
+});
+
+describe('投自己組', () => {
+  it('投自己組：大螢幕與一飛沖天都不算進自己組；股神獎算報酬；算有花掉、不倒扣', async () => {
+    await phase('wed', 'open');
+    await present('wed', '第1組');
+    await invest('甲', '第1組', 100 * W); // 甲是第1組，在自己組簡報時 all in 自己組（×2）
+    await invest('乙', '第1組', 30 * W); // 乙是第2組，投第1組 ×2
+    await invest('乙', '第2組', 70 * W); // 乙投自己組 ×1
+    const totals = Object.fromEntries((await state()).courses.wed.groups.map((g) => [g.id, g.total]));
+    expect(totals).toEqual({ 第1組: 60 * W, 第2組: 0, 第3組: 0 });
+    // 自己的錢包與加權後金額照樣看得到
+    expect((await me('甲')).courses.wed).toMatchObject({ alloc: { 第1組: 100 * W }, weighted: { 第1組: 200 * W }, remaining: 0 });
+    await phase('wed', 'close');
+    const r = await adminResults('wed');
+    const g = Object.fromEntries(r.groups.map((x) => [x.group, x]));
+    expect(g.第1組).toMatchObject({ raw: 60 * W, penalty: 0, final: 60 * W, rank: 1, multiplier: 3 });
+    expect(g.第2組).toMatchObject({ raw: 0, penalty: 0, rank: 2 });
+    // 丙沒登入過 → 不倒扣
+    const p = Object.fromEntries(r.investors.map((x) => [x.name, x]));
+    expect(p.甲).toMatchObject({ invested: 100 * W, unspent: 0, payout: 200 * W * 3, rank: 1 });
+    expect(p.乙.payout).toBe(60 * W * 3 + 70 * W * 2);
+    expect(r.stockGods).toEqual(['甲']);
   });
 });
 
