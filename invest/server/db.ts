@@ -17,6 +17,12 @@ export interface DbOptions {
   darkMs?: number;
   /** 名單是空的時候放入的假資料 */
   seed?: RosterEntry[];
+  /** 假名單學生的密碼（只在放入 seed 名單時設定） */
+  seedPassword?: string;
+  /** 假的業師帳號（密碼 TNDA） */
+  seedMentors?: string[];
+  /** 假的各組 slogan：「場次|組別」→ slogan */
+  seedSlogans?: Record<string, string>;
   /** 假的出席紀錄：只在名單是空的、正在放入 seed 名單時一起放入 */
   seedAttendance?: { course: string; name: string; week: number; status: string }[];
 }
@@ -53,6 +59,27 @@ export async function openDb(opts: DbOptions) {
          on conflict do nothing`,
         [JSON.stringify(opts.seed)],
       );
+      await pg.query('select invest.ensure_student_accounts()');
+      if (opts.seedPassword) {
+        await pg.query(
+          `select invest.set_password(a.name_key, $1) from invest.account a where a.role = 'student' and a.pw_hash is null`,
+          [opts.seedPassword],
+        );
+      }
+      for (const m of opts.seedMentors ?? []) {
+        await pg.query(
+          `insert into invest.account (name_key, name, role) values (invest.name_key($1), invest.norm_name($1), 'mentor') on conflict do nothing`,
+          [m],
+        );
+        await pg.query(`select invest.set_password(invest.name_key($1), 'TNDA')`, [m]);
+      }
+      for (const [k, slogan] of Object.entries(opts.seedSlogans ?? {})) {
+        const [course, grp] = k.split('|');
+        await pg.query(
+          `insert into invest.group_info (course, grp, slogan) values ($1, $2, $3) on conflict (course, grp) do update set slogan = excluded.slogan`,
+          [course, grp, slogan],
+        );
+      }
       if (opts.seedAttendance?.length) {
         await pg.query(
           `insert into invest.attendance (course, name_key, week, status)

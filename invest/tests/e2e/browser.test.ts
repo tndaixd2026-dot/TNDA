@@ -32,6 +32,15 @@ async function freePort(): Promise<number> {
   });
 }
 
+async function rpcJson(fn: string, args: Record<string, unknown>) {
+  const res = await fetch(`${base}/rest/v1/rpc/${fn}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pw: ADMIN, ...args }),
+  });
+  return res.json();
+}
+
 async function admin(fn: string, args: Record<string, unknown>) {
   const res = await fetch(`${base}/rest/v1/rpc/${fn}`, {
     method: 'POST',
@@ -100,6 +109,8 @@ async function loginStudent(page: Page, name: string) {
   // ?intro=0：跳過進場動畫（進場動畫另外測）
   await page.goto(base + '/?intro=0');
   await page.getByLabel('你的姓名').fill(name);
+  // 本機版假名單的學生密碼都是 1234
+  await page.getByLabel('密碼').fill('1234');
   await page.getByRole('button', { name: '進入' }).click();
   await page.getByText('可用餘額').waitFor();
 }
@@ -270,29 +281,53 @@ describe('瀏覽器實測：學生下單 → 大螢幕', () => {
     await expect(third.locator('.hold-amount').innerText()).resolves.toContain('5');
     await expect.poll(() => phone.locator('.wallet-value').innerText(), { timeout: 2000 }).toContain('45');
 
-    // 倒數結束自動封盤，大螢幕揭曉結果，學生看到自己的報酬
-    await screen.getByText('股神獎', { exact: true }).waitFor({ timeout: (DARK_SECONDS + 3) * 1000 });
-    await screen.getByText('一飛沖天獎', { exact: true }).waitFor();
-    await phone.getByText('你的報酬').waitFor({ timeout: 4000 });
-    await expect(phone.locator('.result-rank').innerText()).resolves.toMatch(/第 1 名 \/ 1 位有投資的同學/);
-    // 王小明沒投完 45 萬（有登入）→ 從第1組倒扣；排行榜只列各組金額，不列學生姓名
-    await phone.getByText('你有 45 萬沒投完').waitFor();
-    const table = await screen.locator('.final-table').innerText();
-    expect(table).toContain('−45');
-    expect(table).not.toContain('王小明');
+    // 倒數結束自動封盤：結果先不公開，大螢幕輪播各組作品，學生手機等待頒獎
+    await screen.getByText('等待頒獎揭曉').waitFor({ timeout: (DARK_SECONDS + 3) * 1000 });
+    expect(await screen.evaluate(() => document.body.innerText)).not.toContain('萬');
+    await screen.locator('.carousel .showcase-slogan').waitFor();
+    await phone.getByText('等待大螢幕頒獎揭曉').waitFor({ timeout: 4000 });
+    await expect(phone.locator('.result-card').count()).resolves.toBe(0);
 
-    // 管理員按「取消封盤」：倒數已結束，所以回到開盤中；大螢幕回到走勢與排行，學生又能下單
+    // 管理員開始頒獎，一步一步揭曉（也可以用鍵盤／簡報筆的 →）
     const adminPage = await openScreen();
     adminPage.on('dialog', (d) => void d.accept());
     await adminPage.goto(base + '/admin/');
     await adminPage.getByPlaceholder('管理員密碼').fill(ADMIN);
     await adminPage.getByRole('button', { name: '登入' }).click();
+    await adminPage.getByRole('button', { name: '開始頒獎' }).click();
+    await screen.getByText('頒獎典禮', { exact: true }).waitFor({ timeout: 3000 });
+    await adminPage.keyboard.press('ArrowRight');
+    await screen.getByText('結果揭曉', { exact: false }).waitFor({ timeout: 3000 });
+    const labels: string[] = await rpcJson('invest_admin_overview', {}).then((o) => o.stage.awardLabels);
+    const goto = (label: string) => admin('invest_admin_stage', { action: 'goto', step: labels.indexOf(label) });
+    // 第 1 名揭曉前，手機還看不到報酬
+    await expect(phone.locator('.result-card').count()).resolves.toBe(0);
+    await goto('上半場・週三：第 1 名・一飛沖天獎');
+    await screen.locator('.drumroll').waitFor({ timeout: 3000 });
+    await screen.getByText('一飛沖天獎', { exact: true }).waitFor({ timeout: 6000 });
+    await screen.locator('.stage-first .showcase-slogan').waitFor();
+    await screen.locator('.stage-first .member').first().waitFor();
+    // 揭曉第 1 名的同時，學生手機出現自己的報酬
+    await phone.locator('.result-card').waitFor({ timeout: 4000 });
+    await expect(phone.locator('.result-rank').innerText()).resolves.toMatch(/第 1 名 \/ 1 位有投資的同學/);
+    await phone.getByText('你有 45 萬沒投完').waitFor();
+    await goto('上半場・週三：股神獎');
+    await screen.getByText('股神獎', { exact: true }).waitFor({ timeout: 3000 });
+    await goto('上半場・週三：完整排名');
+    await screen.locator('.final-table').waitFor({ timeout: 3000 });
+    // 排行榜只列各組金額，不列學生姓名
+    const table = await screen.locator('.final-table').innerText();
+    expect(table).toContain('−45');
+    expect(table).not.toContain('王小明');
+
+    // 回到盤況畫面，管理員按「取消封盤」：倒數已結束，所以回到開盤中；大螢幕回到走勢與排行，學生又能下單
+    await adminPage.getByRole('button', { name: '盤況畫面' }).click();
     await adminPage.getByRole('button', { name: /取消封盤（回到開盤中）/ }).click();
     await screen.getByText('目前排行').waitFor({ timeout: 2000 });
     await expect(boardTotal(screen, '第2組')).resolves.toBe('50萬');
     await phone.locator('.btn-plus').first().waitFor({ timeout: 4000 });
     await expect(phone.locator('.btn-plus').first().isEnabled()).resolves.toBe(true);
-    await expect(phone.getByText('你的報酬').count()).resolves.toBe(0);
+    await expect(phone.locator('.result-card').count()).resolves.toBe(0);
     await adminPage.context().close();
     await screen.context().close();
     await phone.context().close();

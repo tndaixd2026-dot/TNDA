@@ -49,6 +49,12 @@ export interface GroupResult {
   deductions: { name: string; unspent: number }[];
 }
 
+export interface OtherInvestorResult {
+  name: string;
+  invested: number;
+  payout: number;
+}
+
 export interface InvestorResult {
   name: string;
   group: string;
@@ -64,6 +70,8 @@ export interface Results {
   groups: GroupResult[];
   /** 只列有投資的人（個人名次的分母），依名次排序 */
   investors: InvestorResult[];
+  /** 業師、老師、訪客：投資算進各組總額，但不參加股神獎與個人名次 */
+  others?: OtherInvestorResult[];
   /** 一飛沖天獎（可並列；最高的組即使是負數也得獎） */
   rocket: string[];
   /** 股神獎（可並列） */
@@ -89,11 +97,20 @@ export interface PublicResults {
   investorCount: number;
 }
 
-export interface PublicGroup {
+export interface GroupShowcase {
+  /** 作品題目／slogan（管理員頁填寫） */
+  slogan: string;
+  /** 封面照片的版本；沒有封面為 null。照片本身用 invest_group_cover 另外抓 */
+  coverVer: number | null;
+  /** 組員（學生）姓名 */
+  memberNames: string[];
+}
+
+export interface PublicGroup extends GroupShowcase {
   id: string;
-  /** 暗盤期間為 null */
+  /** 暗盤期間、封盤後頒獎揭曉前為 null */
   total: number | null;
-  /** 暗盤期間為 null */
+  /** 暗盤期間、封盤後頒獎揭曉前為 null */
   rank: number | null;
   members: number;
 }
@@ -105,6 +122,8 @@ export interface PublicCourse {
   darkAt: number | null;
   darkEndsAt: number | null;
   closedAt: number | null;
+  /** 封盤後，頒獎已揭曉這一場第一名（之後各組金額、結果才公開） */
+  revealed: boolean;
   /** 依組別順序（第 1 組、第 2 組…） */
   groups: PublicGroup[];
   students: number;
@@ -122,23 +141,73 @@ export interface PublicState {
   active: CourseId;
   darkMs: number;
   courses: Record<CourseId, PublicCourse>;
+  stage: Stage;
 }
+
+/** 頒獎的一步（伺服器依兩場的結果產生） */
+export type AwardScene =
+  | { kind: 'title'; label: string }
+  | { kind: 'intro'; label: string; course: CourseId; groups: number; investors: number; students: number }
+  | { kind: 'podium' | 'rocket'; label: string; course: CourseId; rank: number; groups: (PublicGroupResult & GroupShowcase)[] }
+  | { kind: 'stockgod'; label: string; course: CourseId; winners: { name: string; group: string; payout: number }[]; investors: number }
+  | { kind: 'ranking'; label: string; course: CourseId; results: PublicResults }
+  | { kind: 'finale'; label: string; courses: { course: CourseId; rocket: string[]; stockGods: { name: string; group: string; payout: number }[] }[] };
+
+export interface RecapCourse {
+  course: CourseId;
+  students: number;
+  joined: number;
+  invested: number;
+  investors: number;
+  rocket: string[] | null;
+  stockGods: { name: string; group: string; payout: number }[] | null;
+}
+
+/** 業師總結的一頁 */
+export interface SlideScene {
+  kind: 'title' | 'text' | 'recap';
+  id: number;
+  label: string;
+  title: string;
+  subtitle: string;
+  body: string;
+  imageVer: number | null;
+  recap?: RecapCourse[];
+}
+
+/** 大螢幕舞台：盤況 → 頒獎 → 業師總結（管理員一步一步切換） */
+export type Stage =
+  | { mode: 'market'; step: number; total: number; scene: null }
+  | { mode: 'awards'; step: number; total: number; scene: AwardScene }
+  | { mode: 'summary'; step: number; total: number; scene: SlideScene };
+
+export type Role = 'student' | 'mentor' | 'guest';
 
 export interface MyCourse {
   course: CourseId;
-  group: string;
+  /** 學生自己的組；業師、老師、訪客沒有組（null） */
+  group: string | null;
   alloc: Allocation;
   invested: number;
   remaining: number;
   /** 封盤後：有投資才有個人名次（分母只算有投資的人） */
-  result: { payout: number; rank: number; of: number } | null;
+  /** 業師、老師、來賓：rank、of 為 null（不參加股神獎） */
+  result: { payout: number; rank: number | null; of: number | null } | null;
   /** 封盤後：因為自己沒投完而從自己那組倒扣的金額；沒登入過的人不倒扣 */
   deducted: number | null;
+  /** 已封盤、等待頒獎揭曉 */
+  awaiting: boolean;
 }
 
 export interface MeState {
   name: string;
+  role: Role;
   courses: Partial<Record<CourseId, MyCourse>>;
+}
+
+export interface LoginResult {
+  token: string;
+  me: MeState;
 }
 
 export interface AdminStudent {
@@ -167,6 +236,21 @@ export interface AdminOverview {
   courses: Record<CourseId, AdminCourse>;
   /** 登入動畫的出席率看板 */
   board: { visible: boolean; wed: { students: number; weeks: number }; thu: { students: number; weeks: number } };
+  stage: Stage & { awardLabels: string[]; slideLabels: string[] };
+  groupInfo: Record<CourseId, { group: string; slogan: string; coverVer: number | null }[]>;
+  slides: AdminSlide[];
+  accounts: { name: string; role: Role; hasPassword: boolean; locked: boolean }[];
+}
+
+export interface AdminSlide {
+  id?: number;
+  kind: 'title' | 'text' | 'recap';
+  title: string;
+  subtitle: string;
+  body: string;
+  imageVer?: number | null;
+  /** 只在要換圖時送出：data URL，或 null 刪除圖片 */
+  image?: string | null;
 }
 
 export interface AttendancePreview {

@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp } from './app.ts';
 import { openDb } from './db.ts';
-import { seedAttendance, seedRoster } from './seed.ts';
+import { seedAttendance, seedRoster, seedSlogans } from './seed.ts';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const env = process.env;
@@ -36,6 +36,10 @@ const db = await openDb({
   darkMs: darkSeconds ? darkSeconds * 1000 : undefined,
   seed: seedRoster(),
   seedAttendance: seedAttendance(),
+  // 本機版假名單：學生密碼 1234；業師「測試業師」與來賓 TNDA1～TNDA5 密碼 TNDA
+  seedPassword: '1234',
+  seedMentors: ['測試業師'],
+  seedSlogans: seedSlogans(),
 });
 const server = createApp(db, { staticDir: join(root, 'dist') });
 
