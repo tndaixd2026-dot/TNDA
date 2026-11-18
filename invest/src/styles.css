@@ -3545,3 +3545,172 @@ html.screen-mode body {
     grid-template-columns: 1fr;
   }
 }
+
+/* 股神獎倍率表：黑底卡片，在橘色、白色、黑色背景上都清楚 */
+.payout {
+  background: var(--tnda-black);
+  color: var(--tnda-white);
+  border: var(--border-thin) solid var(--tnda-black);
+  padding: 12px 14px;
+  margin: 14px 0;
+}
+.payout-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin-bottom: 8px;
+}
+.payout-title {
+  font-family: var(--font-cjk);
+  font-weight: 800;
+  font-size: 1.05rem;
+  color: var(--tnda-orange);
+}
+.payout-sub {
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.72);
+}
+.payout-tiers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+.payout-tier {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 2px;
+  border: var(--border-hair) solid rgba(255, 255, 255, 0.28);
+  text-align: center;
+}
+.payout-tier.tier-1 {
+  background: var(--tnda-orange);
+  border-color: var(--tnda-orange);
+  color: var(--tnda-black);
+}
+.payout-rank {
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.payout-mult {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.payout-tier:not(.tier-1) .payout-mult {
+  color: var(--tnda-orange);
+}
+.payout-formula {
+  margin: 10px 0 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.payout-formula strong {
+  color: var(--tnda-orange);
+}
+.payout-eg {
+  display: block;
+  color: rgba(255, 255, 255, 0.72);
+}
+.login-page .payout {
+  margin-top: 16px;
+}
+
+/* 大螢幕版：rem 為單位，跟著螢幕縮放 */
+.payout-screen {
+  padding: 1.2rem 1.6rem;
+  margin: 0 0 1.8rem;
+  max-width: 64rem;
+  box-shadow: 0.5rem 0.5rem 0 rgba(0, 0, 0, 0.35);
+}
+.payout-screen .payout-head {
+  margin-bottom: 0.9rem;
+  gap: 0.4rem 1.2rem;
+}
+.payout-screen .payout-title {
+  font-size: 2rem;
+}
+.payout-screen .payout-sub {
+  font-size: 1.3rem;
+}
+.payout-screen .payout-tiers {
+  gap: 0.8rem;
+}
+.payout-screen .payout-tier {
+  padding: 0.7rem 0.4rem;
+  gap: 0.2rem;
+}
+.payout-screen .payout-rank {
+  font-size: 1.3rem;
+}
+.payout-screen .payout-mult {
+  font-size: 3rem;
+}
+.payout-screen .payout-formula {
+  margin-top: 1rem;
+  font-size: 1.35rem;
+}
+.screen-dark .payout-screen {
+  width: 100%;
+  margin: 0 0 0.6rem;
+  border-color: rgba(255, 255, 255, 0.35);
+  box-shadow: none;
+}
+.screen-dark .payout-screen .payout-head {
+  justify-content: center;
+}
+
+/* 開盤中排行：名次下面標「現在封盤的話」的倍率 */
+.board-rank {
+  display: flex;
+  flex-direction: column;
+  line-height: 1;
+}
+.board-mult {
+  margin-top: 0.25rem;
+  font-size: 1rem;
+  color: rgba(255, 255, 255, 0.72);
+}
+.board-top .board-mult {
+  color: var(--tnda-white);
+}
+.payout-phone .payout-mult {
+  font-size: clamp(1.05rem, 5.4vw, 1.35rem);
+}
+/* 未開盤大螢幕：規則與倍率表左右並排 */
+.pending-info {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 2rem;
+  align-items: start;
+  max-width: 70rem;
+  margin-bottom: 1.6rem;
+}
+.pending-info .pending-rules {
+  margin: 0;
+  font-size: 1.4rem;
+}
+.pending-info .payout-screen {
+  margin: 0;
+  padding: 1rem 1.2rem;
+}
+.pending-info .payout-screen .payout-title {
+  font-size: 1.7rem;
+}
+.pending-info .payout-screen .payout-sub,
+.pending-info .payout-screen .payout-rank {
+  font-size: 1.1rem;
+}
+.pending-info .payout-screen .payout-mult {
+  font-size: 2.4rem;
+}
+.pending-info .payout-screen .payout-formula {
+  font-size: 1.15rem;
+}

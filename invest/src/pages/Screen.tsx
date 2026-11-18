@@ -4,11 +4,13 @@ import type { ComponentChildren } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
 import { clockTime, countdown, wan } from '../../shared/format.ts';
 import { splitGroupLabel } from '../../shared/roster.ts';
+import { multiplierForRank } from '../../shared/rules.ts';
 import { courseLabel, type CourseId, type HistoryPoint, type PublicCourse } from '../../shared/types.ts';
 import { useLive, useNow } from '../api.ts';
 import { Chart } from '../ui/Chart.tsx';
 import { Eyebrow, GroupName, Logo, PhaseBadge, QrCode, Swatch, THEME, ThemeTag, groupIndexMap, pad2 } from '../ui/common.tsx';
 import { useFlip } from '../ui/motion.ts';
+import { PayoutTable } from '../ui/Payout.tsx';
 import { GroupCarousel } from '../ui/Showcase.tsx';
 import { AwardsView, SlideView } from '../ui/Stage.tsx';
 import { Count, Sparkle, Ticker, Wan, WinBar } from '../ui/y2k.tsx';
@@ -115,6 +117,8 @@ export function Screen() {
   );
 }
 
+const PAYOUT_TICKER = ['股神獎倍率', '第 1 名 ×3', '第 2 名 ×2', '第 3 名 ×1.5', '其餘 ×1', '報酬 ＝ 投資金額 × 倍率'];
+
 /** 底部跑馬燈：未開盤跑規則、開盤中跑各組金額、暗盤只跑提示（不含任何金額） */
 function ScreenTicker({ pc }: { pc: PublicCourse }) {
   let items: ComponentChildren[];
@@ -126,10 +130,11 @@ function ScreenTicker({ pc }: { pc: PublicCourse }) {
         <span class="tk-value">{wan(g.total ?? 0)} 萬</span>
       </span>
     ));
+    items.push(...PAYOUT_TICKER);
   } else if (pc.phase === 'dark') {
-    items = ['Dark Mode', '暗盤中', '金額與排名已隱藏', '倒數結束自動封盤', '還沒投完的同學快調整'];
+    items = ['Dark Mode', '暗盤中', '金額與排名已隱藏', '倒數結束自動封盤', '還沒投完的同學快調整', ...PAYOUT_TICKER];
   } else {
-    items = ['Live Market', '掃 QR code 加入', '每人 100 萬虛擬資金', '只能投別組', '單一組最多 50 萬', '等待開盤'];
+    items = ['Live Market', '掃 QR code 加入', '每人 100 萬虛擬資金', '只能投別組', '單一組最多 50 萬', ...PAYOUT_TICKER, '等待開盤'];
   }
   return <Ticker items={items} class={`screen-ticker ticker-${pc.phase}`} />;
 }
@@ -163,13 +168,13 @@ function PendingView({ pc, joinUrl, darkMs }: { pc: PublicCourse; joinUrl: strin
           <span class="display">Live Market</span>
           <span class="pending-title-zh">用 100 萬，投給你看好的組</span>
         </h1>
+        <div class="pending-info">
         <ol class="pending-rules">
           {[
             '每人 100 萬虛擬資金，只能投別組',
             '單一組最多 50 萬',
             '沒投完的錢，封盤時從自己那組倒扣',
             `最後 ${dark}暗盤：金額與排名隱藏`,
-            '封盤後第 1、2、3 名的組 ×3、×2、×1.5 計算你的報酬',
           ].map((t, i) => (
             <li key={t}>
               <span class="rule-num">{pad2(i + 1)}</span>
@@ -177,6 +182,8 @@ function PendingView({ pc, joinUrl, darkMs }: { pc: PublicCourse; joinUrl: strin
             </li>
           ))}
         </ol>
+        <PayoutTable size="screen" />
+        </div>
         <div class="pending-groups">
           {pc.groups.map((g) => (
             <span class="group-chip" key={g.id}>
@@ -235,7 +242,10 @@ function LiveView({
             const delta = (g.total ?? 0) - (before[g.id] ?? 0);
             return (
               <li key={g.id} data-key={g.id} class={`board-row${g.rank === 1 ? ' board-top' : ''}`}>
-                <span class="board-rank">{pad2(g.rank ?? 0)}</span>
+                <span class="board-rank">
+                  {pad2(g.rank ?? 0)}
+                  <span class="board-mult">×{multiplierForRank(g.rank ?? 99)}</span>
+                </span>
                 <GroupName id={g.id} index={idx.get(g.id) ?? 0} stacked />
                 <span class="board-value">
                   <span class="board-total">
@@ -271,6 +281,7 @@ function DarkView({ pc, now, joinUrl }: { pc: PublicCourse; now: number; joinUrl
           </span>
         </div>
         <div class="dark-hint">倒數結束自動封盤 · 還沒投完的同學快調整</div>
+        <PayoutTable size="screen" compact />
         <JoinBox joinUrl={joinUrl} />
       </div>
       <GroupCarousel pc={pc} />
