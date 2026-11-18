@@ -85,7 +85,7 @@ function audit() {
   await admin('invest_admin_reset', { course: 'wed' });
   await admin('invest_admin_stage', { action: 'market' });
   await admin('invest_admin_phase', { course: 'wed', action: 'open' });
-  // 讓第 2 組在報告中（簡報 ×2），檢查「報告中」橫條與加權標示的版面
+  // 讓第 2 組在報告中（簡報 ×1.4），檢查「報告中」橫條與加權標示的版面
   const g2 = [...new Set(roster.map((r) => r.group))].sort()[1];
   await admin('invest_admin_present', { course: 'wed', grp: g2 });
 

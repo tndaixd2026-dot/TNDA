@@ -143,7 +143,7 @@ function Login({ onLogin, notice }: { onLogin: (token: string) => void; notice: 
           '沒有單組上限：很有信心可以 all in 100 萬',
           '封盤時沒投完的錢，會從你們組的總額倒扣',
           '最後 5 分鐘是暗盤：看不到各組金額，但還能調整',
-          '某組上台報告時投給它有加權：簡報 ×2、Demo ×1.5、講評 ×1.2',
+          '某組上台報告時投給它有加權：簡報 ×1.4、Demo ×1.2、講評 ×1.1',
         ].map((t, i) => (
           <li key={t}>
             <span class="rule-num">{pad2(i + 1)}</span>
@@ -373,7 +373,7 @@ function CourseMarket(p: CourseMarketProps) {
         </div>
       </Card>
 
-      <PresentingBar pc={pc} now={now} />
+      <PresentingBar pc={pc} now={now} nonStudent={p.role !== 'student'} />
       {pc.phase === 'pending' && <div class="banner banner-info">還沒開盤，老師開盤後就能下單。</div>}
       {pc.phase === 'dark' && (
         <div class="banner banner-dark">
@@ -407,7 +407,8 @@ function CourseMarket(p: CourseMarketProps) {
           const cur = alloc[g.id] ?? 0;
           const short = splitGroupLabel(g.id).short;
           const result = pc.results?.groups.find((r) => r.group === g.id);
-          const boost = isOwn ? 1 : weightNow(live, g.id);
+          // 只有學生的錢吃時段加權；業師、老師、來賓一律 ×1
+          const boost = isOwn || p.role !== 'student' ? 1 : weightNow(live, g.id);
           // 加權後金額（伺服器算好的；送出中還沒回來時先不顯示）
           const weighted = (mine.alloc[g.id] ?? 0) === cur ? (mine.weighted?.[g.id] ?? cur) : null;
           return (

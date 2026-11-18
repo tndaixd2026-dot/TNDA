@@ -279,12 +279,12 @@ describe('computeResults', () => {
 
 describe('報告時段加權', () => {
   const MIN = 60_000;
-  it('開始報告後：簡報 3 分 ×2 → Demo 7 分 ×1.5 → 業師講評 6 分 ×1.2 → 之後 ×1', () => {
-    expect(stageAt(0)).toMatchObject({ weight: 2, leftMs: 3 * MIN });
+  it('開始報告後：簡報 3 分 ×1.4 → Demo 7 分 ×1.2 → 業師講評 6 分 ×1.1 → 之後 ×1', () => {
+    expect(stageAt(0)).toMatchObject({ weight: 1.4, leftMs: 3 * MIN });
     expect(stageAt(3 * MIN - 1).stage?.key).toBe('pitch');
-    expect(stageAt(3 * MIN)).toMatchObject({ weight: 1.5, leftMs: 7 * MIN });
-    expect(stageAt(10 * MIN - 1).weight).toBe(1.5);
-    expect(stageAt(10 * MIN)).toMatchObject({ weight: 1.2, leftMs: 6 * MIN });
+    expect(stageAt(3 * MIN)).toMatchObject({ weight: 1.2, leftMs: 7 * MIN });
+    expect(stageAt(10 * MIN - 1).weight).toBe(1.2);
+    expect(stageAt(10 * MIN)).toMatchObject({ weight: 1.1, leftMs: 6 * MIN });
     expect(stageAt(16 * MIN)).toMatchObject({ stage: null, weight: 1, leftMs: 0 });
     expect(stageAt(-5).weight).toBe(1);
     expect(PRESENT_WINDOW_MS).toBe(16 * MIN);

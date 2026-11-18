@@ -16,7 +16,7 @@ const ROLE_LABEL: Record<Role, string> = { student: '學生', mentor: '業師／
 
 // ---------- 報告順序（時段加權） ----------
 
-/** 每組上台時按「開始報告」：簡報 3 分 ×2 → Demo 7 分 ×1.5 → 業師講評 6 分 ×1.2 自動計時 */
+/** 每組上台時按「開始報告」：簡報 3 分 ×1.4 → Demo 7 分 ×1.2 → 業師講評 6 分 ×1.1 自動計時 */
 export function PresentCard({ pc, now, act, busy }: { pc: PublicCourse; now: number; act: Act; busy: boolean }) {
   const idx = groupIndexMap(pc);
   const live = presentingNow(pc, now);
@@ -34,7 +34,7 @@ export function PresentCard({ pc, now, act, busy }: { pc: PublicCourse; now: num
     } else if (pc.presented[g] && !confirm(`${label}已經報告過，要重新開始計時嗎？`)) {
       return;
     }
-    void act('invest_admin_present', { course: pc.course, grp: g }, `${label}開始報告：簡報 ×2`);
+    void act('invest_admin_present', { course: pc.course, grp: g }, `${label}開始報告：簡報 ×1.4`);
   }
 
   return (
@@ -42,7 +42,7 @@ export function PresentCard({ pc, now, act, busy }: { pc: PublicCourse; now: num
       <Eyebrow>Presenting · 報告順序</Eyebrow>
       <h2 class="card-title">每組上台時按「開始報告」</h2>
       <p class="muted">
-        按下後自動計時：簡報 3 分鐘 ×2 → Demo 7 分鐘 ×1.5 → 業師講評 6 分鐘 ×1.2，之後 ×1。換下一組上台時，上一組的加權立即結束。
+        按下後自動計時：簡報 3 分鐘 ×1.4 → Demo 7 分鐘 ×1.2 → 業師講評 6 分鐘 ×1.1，之後 ×1。換下一組上台時，上一組的加權立即結束。
       </p>
       {live && <PresentingBar pc={pc} now={now} />}
       <div class="control-buttons">

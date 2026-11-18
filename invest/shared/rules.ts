@@ -17,9 +17,9 @@ export interface PresentStage {
   weight: number;
 }
 export const PRESENT_STAGES: readonly PresentStage[] = [
-  { key: 'pitch', label: '簡報', ms: 3 * 60_000, weight: 2 },
-  { key: 'demo', label: 'Demo', ms: 7 * 60_000, weight: 1.5 },
-  { key: 'review', label: '業師講評', ms: 6 * 60_000, weight: 1.2 },
+  { key: 'pitch', label: '簡報', ms: 3 * 60_000, weight: 1.4 },
+  { key: 'demo', label: 'Demo', ms: 7 * 60_000, weight: 1.2 },
+  { key: 'review', label: '業師講評', ms: 6 * 60_000, weight: 1.1 },
 ];
 /** 三個時段加起來 16 分鐘；之後（或不在報告時段）下單 ×1 */
 export const PRESENT_WINDOW_MS = PRESENT_STAGES.reduce((s, x) => s + x.ms, 0);
@@ -135,7 +135,7 @@ export interface Member {
 
 /**
  * 封盤結算（與 supabase/schema.sql 的 invest.compute_results 相同，測試會逐一比對）。
- * - 每一筆投資（lot）在下單當下決定時段加權 ×2／×1.5／×1.2／×1
+ * - 每一筆投資（lot）在下單當下決定時段加權 ×1.4／×1.2／×1.1／×1
  * - 各組最終金額 = Σ（每筆金額 × 加權）− 自己組員沒花完的錢
  *   （只倒扣這一場有登入過的人；整場沒登入的缺席者不倒扣。有投資的人一定算有登入）
  * - 依最終金額排名（同分同名次、下一名順延），決定倍率；最高的組即使是負數也得一飛沖天獎
