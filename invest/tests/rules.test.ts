@@ -49,8 +49,8 @@ describe('checkInvest', () => {
     expect(checkInvest({ ...base, phase: 'closed' })).toBe('closed');
   });
 
-  it('可以投自己那組；不能投不存在的組', () => {
-    expect(checkInvest({ ...base, group: 'A' })).toBeNull();
+  it('不能投自己那組、也不能投不存在的組', () => {
+    expect(checkInvest({ ...base, group: 'A' })).toBe('own_group');
     expect(checkInvest({ ...base, group: 'Z' })).toBe('unknown_group');
   });
 
@@ -268,16 +268,12 @@ describe('computeResults', () => {
     expect(r.groups.find((g) => g.group === 'D')).toMatchObject({ penalty: BUDGET - 6, final: -(BUDGET - 6) });
   });
 
-  it('投自己組：算個人報酬、算有花掉（不倒扣），但不算進自己組的總額；忽略不存在的組', () => {
-    const r = computeResults(['A', 'B'], [{ name: 'm', group: 'A' }], { m: { A: 50 * W, B: 40 * W, Z: 10 * W } });
+  it('忽略投給自己組或不存在組的髒資料', () => {
+    const r = computeResults(['A', 'B'], [{ name: 'm', group: 'A' }], { m: { A: 50 * W, B: 50 * W, Z: 10 * W } });
     const a = r.groups.find((g) => g.group === 'A')!;
-    const b = r.groups.find((g) => g.group === 'B')!;
     expect(a.raw).toBe(0);
-    expect(a.penalty).toBe(10 * W); // 只有 Z 那 10 萬算沒花完
-    expect(b.rank).toBe(1);
-    expect(r.investors[0].invested).toBe(90 * W);
-    // B 第 1 名 ×3、A 第 2 名 ×2（自己組的錢也算報酬）
-    expect(r.investors[0].payout).toBe(40 * W * 3 + 50 * W * 2);
+    expect(a.penalty).toBe(50 * W);
+    expect(r.investors[0].payout).toBe(50 * W * 3);
   });
 });
 
