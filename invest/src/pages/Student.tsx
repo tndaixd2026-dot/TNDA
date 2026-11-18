@@ -1,6 +1,6 @@
 // 學生端：輸入姓名登入，像買賣股票一樣把 100 萬分配給其他組。
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { BUDGET, MAX_PER_GROUP } from '../../shared/rules.ts';
+import { BUDGET, MAX_PER_GROUP, multiplierForRank } from '../../shared/rules.ts';
 import { countdown, parseWanInput, wan, yuanText } from '../../shared/format.ts';
 import { splitGroupLabel } from '../../shared/roster.ts';
 import {
@@ -17,6 +17,7 @@ import {
 import { rpc, storageGet, storageSet, useLive, useNow } from '../api.ts';
 import { Card, ConnectionDot, Eyebrow, GroupName, Logo, PhaseBadge, ThemeTag, groupIndexMap, pad2, useToast } from '../ui/common.tsx';
 import { Intro, shouldPlayIntro } from '../ui/Intro.tsx';
+import { PayoutTable } from '../ui/Payout.tsx';
 import { Cursor, Sparkle, Wan, WinBar } from '../ui/y2k.tsx';
 
 // 登入後的憑證（不是密碼）；舊版只存姓名的紀錄會被清掉
@@ -148,6 +149,7 @@ function Login({ onLogin, notice }: { onLogin: (token: string) => void; notice: 
           </li>
         ))}
       </ol>
+      <PayoutTable />
       </div>
     </div>
   );
@@ -389,6 +391,7 @@ function CourseMarket(p: CourseMarketProps) {
         </div>
       )}
       {canTrade && remaining === 0 && <div class="banner banner-good">全部投完了，封盤前都還能調整。</div>}
+      {pc.phase !== 'closed' && <PayoutTable compact={pc.phase !== 'pending'} />}
 
       {canTrade && (
         <div class="stepper" role="group" aria-label="每按一次的金額">
@@ -426,7 +429,7 @@ function CourseMarket(p: CourseMarketProps) {
                       </span>
                       <span class="quote-rank">
                         No.{pad2(g.rank ?? 0)}
-                        {result ? ` · ×${result.multiplier}` : ''}
+                        {` · ×${result ? result.multiplier : multiplierForRank(g.rank ?? 99)}`}
                       </span>
                     </>
                   )}
