@@ -48,7 +48,7 @@ function useDrumroll(ms = 2700): boolean {
   return done;
 }
 
-function Drumroll({ course }: { course: CourseId }) {
+function Drumroll({ course, kicker = '第 1 名 · 一飛沖天獎' }: { course: CourseId; kicker?: string }) {
   const [n, setN] = useState(3);
   useEffect(() => {
     const id = setInterval(() => setN((x) => Math.max(1, x - 1)), 900);
@@ -56,7 +56,9 @@ function Drumroll({ course }: { course: CourseId }) {
   }, []);
   return (
     <div class="drumroll">
-      <div class="drumroll-kicker">{courseLabel(course)} · 第 1 名 · 一飛沖天獎</div>
+      <div class="drumroll-kicker">
+        {courseLabel(course)} · {kicker}
+      </div>
       <div class="drumroll-num" key={n}>
         {n}
       </div>
@@ -126,6 +128,8 @@ export function AwardsView({ scene, pub }: { scene: AwardScene; pub: PublicState
           <p class="stage-note">個人報酬排名：{scene.investors} 位有投資的同學（業師、來賓不列入）· 報酬同分時，下注越快的人勝出</p>
         </main>
       );
+    case 'angel':
+      return <AngelView scene={scene} pub={pub} />;
     case 'finale':
       return (
         <main class="stage stage-finale">
@@ -147,6 +151,12 @@ export function AwardsView({ scene, pub }: { scene: AwardScene; pub: PublicState
                   <span class="finale-label">股神</span>
                   {c.stockGods.length ? c.stockGods.map((g) => g.name).join('、') : '從缺'}
                 </div>
+                {c.angel?.length > 0 && (
+                  <div class="finale-line">
+                    <span class="finale-label">天使投資</span>
+                    {c.angel.map((g) => splitGroupLabel(g).short).join('、')}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -188,6 +198,47 @@ function PodiumView({ scene, pub }: { scene: Extract<AwardScene, { kind: 'podium
               {g.penalty > 0 && <small>（倒扣 {wan(g.penalty)} 萬）</small>}
             </div>
           </GroupShowcaseCard>
+        ))}
+      </div>
+    </main>
+  );
+}
+
+/** TNDA 天使投資獎：業師評分選出的組。3、2、1 倒數後揭曉；還沒選得獎組別時顯示「業師評分中」 */
+function AngelView({ scene, pub }: { scene: Extract<AwardScene, { kind: 'angel' }>; pub: PublicState }) {
+  const has = scene.groups.length > 0;
+  const revealed = useDrumroll(has ? 2700 : 0);
+  const idx = groupIndexMap(pub.courses[scene.course]);
+  if (!has) {
+    return (
+      <main class="stage stage-angel stage-angel-wait">
+        <div class="stage-kicker">{courseLabel(scene.course)} · Angel Award</div>
+        <h1 class="stage-award-title">TNDA 天使投資獎</h1>
+        <p class="stage-lead">業師評分中…</p>
+      </main>
+    );
+  }
+  if (!revealed) {
+    return (
+      <main class="stage stage-drum stage-angel">
+        <Drumroll course={scene.course} kicker="TNDA 天使投資獎 · 業師評分" />
+      </main>
+    );
+  }
+  const many = scene.groups.length > 1;
+  return (
+    <main class={`stage stage-podium stage-first stage-angel${many ? ' stage-many' : ''}`}>
+      <Burst count={24} />
+      <div class="podium-head">
+        <span class="podium-rank">Angel</span>
+        <span class="podium-title">
+          <span class="podium-course">{courseLabel(scene.course)} · 業師評分</span>
+          <span class="podium-award">TNDA 天使投資獎</span>
+        </span>
+      </div>
+      <div class="podium-cards">
+        {scene.groups.map((g) => (
+          <GroupShowcaseCard key={g.group} course={scene.course} group={g.group} index={idx.get(g.group) ?? 0} info={g} />
         ))}
       </div>
     </main>
@@ -278,6 +329,12 @@ export function SlideView({ scene, step, total }: { scene: SlideScene; step: num
                 <div class="recap-line">
                   <span class="finale-label">股神</span>
                   {c.stockGods.length ? c.stockGods.map((g) => g.name).join('、') : '從缺'}
+                </div>
+              )}
+              {c.angel && c.angel.length > 0 && (
+                <div class="recap-line">
+                  <span class="finale-label">天使投資</span>
+                  {c.angel.map((g) => splitGroupLabel(g).short).join('、')}
                 </div>
               )}
             </div>

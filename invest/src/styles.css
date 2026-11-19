@@ -4138,3 +4138,40 @@ html.screen-mode body {
 .screen-dark .payout-screen .payout-mult {
   font-size: 2.1rem;
 }
+
+/* 管理員：TNDA 天使投資獎 */
+.angel-course {
+  padding: 12px 0;
+  border-top: var(--border-hair) solid var(--line);
+}
+.angel-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin-bottom: 10px;
+}
+.angel-set {
+  color: var(--tnda-orange);
+  font-weight: 800;
+}
+.angel-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.angel-pick.on {
+  background: var(--tnda-orange);
+  border-color: var(--tnda-orange);
+  color: var(--tnda-black);
+  font-weight: 800;
+}
+/* 大螢幕：天使投資獎標題沒有「×倍率」，名次字改成 Angel */
+.stage-angel-wait {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 1rem;
+}

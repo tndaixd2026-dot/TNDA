@@ -59,7 +59,7 @@ async function reset(opts: { darkMs?: number; roster?: RosterEntry[] } = {}) {
       (1, 'title', '業師總結', '期末提報「這個殼以！」', ''), (2, 'recap', '數字回顧', '', ''), (3, 'text', '謝謝大家', 'TNDA · Next D', '');
     update invest.course set phase = 'pending', opened_at = null, dark_at = null, dark_ends_at = null,
       closed_at = null, dark_history_id = null, closed_from = null, dark_left_ms = null, results = null, revealed = false,
-      presenting = null, presenting_at = null, presented = '{}'::jsonb;
+      presenting = null, presenting_at = null, presented = '{}'::jsonb, angel = '[]'::jsonb, angel_revealed = false;
     update invest.config set active = 'wed', board_visible = true, stage_mode = 'market', stage_step = 0, version = version + 1;
   `);
   await db.pg.query('update invest.config set dark_ms = $1 where id = 1', [opts.darkMs ?? 60_000]);
@@ -969,6 +969,54 @@ describe('帳號與密碼', () => {
 describe('頒獎與業師總結（大螢幕舞台）', () => {
   const stageAct = (action: string, step?: number) =>
     call<AdminOverview & Err>('invest_admin_stage', { pw: PW, action, step });
+
+  it('TNDA 天使投資獎：管理員選得獎組別；頒獎走到那一步才公開，之前大螢幕與手機都看不到', async () => {
+    const angel = (course: string, groups: string[]) => call<AdminOverview & Err>('invest_admin_angel', { pw: PW, course, groups });
+    expect((await call<Err>('invest_admin_angel', { pw: 'x', course: 'wed', groups: ['第2組'] })).error).toBe('unauthorized');
+    expect((await angel('wed', ['第9組'])).error).toBe('unknown_group');
+    await phase('wed', 'open');
+    await invest('甲', '第2組', 50 * W);
+    await invest('甲', '第3組', 50 * W);
+    await phase('wed', 'close');
+    const ov = await angel('wed', ['第3組', '第3組']);
+    expect(ov.courses.wed.angel).toEqual(['第3組']);
+    // 還沒揭曉：公開狀態沒有得獎組別
+    expect((await state()).courses.wed.angel).toBeNull();
+
+    const st = await stageAct('awards');
+    const labels = st.stage.awardLabels;
+    const i = labels.indexOf('上半場・週三：TNDA 天使投資獎');
+    expect(i).toBe(labels.indexOf('上半場・週三：股神獎') + 1);
+    expect(labels[i + 1]).toBe('上半場・週三：完整排名');
+    // 走到股神獎：天使投資獎還沒公開
+    await stageAct('goto', i - 1);
+    expect((await state()).courses.wed.angel).toBeNull();
+    // 走到天使投資獎：大螢幕顯示得獎組別的作品資訊，公開狀態也有了
+    await stageAct('goto', i);
+    let s = await state();
+    const scene = s.stage.scene as { kind: string; groups: { group: string; memberNames: string[] }[] };
+    expect(scene.kind).toBe('angel');
+    expect(scene.groups.map((g) => g.group)).toEqual(['第3組']);
+    expect(scene.groups[0].memberNames).toEqual(['丙']);
+    expect(s.courses.wed.angel).toEqual(['第3組']);
+    // 頒獎結束畫面也列出
+    await stageAct('goto', 999);
+    s = await state();
+    expect((s.stage.scene as { courses: { course: string; angel: string[] }[] }).courses[0].angel).toEqual(['第3組']);
+    // 退回前一步再改成兩組並列：要重新走到那一步才公開（已經走過那一步時改，會直接公開）
+    await stageAct('goto', i - 1);
+    await angel('wed', ['第2組', '第3組']);
+    expect((await state()).courses.wed.angel).toBeNull();
+    await stageAct('next');
+    expect((await state()).courses.wed.angel).toEqual(['第2組', '第3組']);
+    // 還沒選得獎組別：那一步顯示「業師評分中」（groups 為空）
+    await angel('wed', []);
+    expect(((await state()).stage.scene as { groups: unknown[] }).groups).toEqual([]);
+    // 重置會清除
+    await angel('wed', ['第2組']);
+    await call('invest_admin_reset', { pw: PW, course: 'wed' });
+    expect((await call<AdminOverview>('invest_admin_overview', { pw: PW })).courses.wed.angel).toEqual([]);
+  });
 
   it('兩場封盤後由管理員一步一步揭曉；走到某場第 1 名時該場結果才公開到學生手機', async () => {
     await phase('wed', 'open');

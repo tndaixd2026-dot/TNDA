@@ -14,6 +14,52 @@ type Notify = (text: string, tone?: 'info' | 'error') => void;
 
 const ROLE_LABEL: Record<Role, string> = { student: '學生', mentor: '業師／老師', guest: '來賓' };
 
+// ---------- TNDA 天使投資獎（業師評分） ----------
+
+/** 業師評分後，由管理員選每一場的得獎組別（可複選＝並列）。頒獎走到「TNDA 天使投資獎」那一步才公開 */
+export function AngelCard({ ov, act, busy }: { ov: AdminOverview; act: Act; busy: boolean }) {
+  function toggle(course: CourseId, group: string) {
+    const cur = ov.courses[course].angel;
+    const next = cur.includes(group) ? cur.filter((g) => g !== group) : [...cur, group];
+    void act(
+      'invest_admin_angel',
+      { course, groups: next },
+      next.length ? `${courseLabel(course)}天使投資獎：${next.map((g) => splitGroupLabel(g).short).join('、')}` : `${courseLabel(course)}天使投資獎：已清除`,
+    );
+  }
+  return (
+    <Card class="angel-card">
+      <Eyebrow>Angel Award · 業師評分</Eyebrow>
+      <h2 class="card-title">TNDA 天使投資獎</h2>
+      <p class="muted">業師評分後，點選每一場的得獎組別（點兩組＝並列，再點一次取消）。頒獎時走到「TNDA 天使投資獎」那一步才會在大螢幕揭曉，之前學生手機與大螢幕都看不到。</p>
+      {COURSE_IDS.map((c) => {
+        const cur = ov.courses[c].angel;
+        const groups = ov.courses[c].groups;
+        if (groups.length === 0) return null;
+        return (
+          <div class="angel-course" key={c}>
+            <div class="angel-head">
+              <strong>{courseLabel(c)}</strong>
+              <span class={cur.length ? 'angel-set' : 'muted'}>{cur.length ? `得獎：${cur.map((g) => splitGroupLabel(g).short).join('、')}` : '還沒選'}</span>
+            </div>
+            <div class="angel-groups" role="group" aria-label={`${courseLabel(c)}天使投資獎得獎組別`}>
+              {groups.map((g) => {
+                const on = cur.includes(g);
+                return (
+                  <button key={g} class={`btn btn-sm angel-pick${on ? ' on' : ''}`} aria-pressed={on} disabled={busy} onClick={() => toggle(c, g)}>
+                    {on ? '★ ' : ''}
+                    {splitGroupLabel(g).short}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </Card>
+  );
+}
+
 // ---------- 報告順序（時段加權） ----------
 
 /** 每組上台時按「開始報告」：簡報 3 分 ×1.4 → Demo 7 分 ×1.2 → 業師講評 6 分 ×1.1 自動計時 */

@@ -140,6 +140,8 @@ export interface PublicCourse {
   presenting: { group: string; startedAt: number } | null;
   /** 各組最近一次開始報告的時間（組別 → 毫秒） */
   presented: Record<string, number>;
+  /** TNDA 天使投資獎得獎組別；頒獎走到這一步之前是 null */
+  angel: string[] | null;
   /** 依組別順序（第 1 組、第 2 組…） */
   groups: PublicGroup[];
   students: number;
@@ -166,8 +168,14 @@ export type AwardScene =
   | { kind: 'intro'; label: string; course: CourseId; groups: number; investors: number; students: number }
   | { kind: 'podium' | 'rocket'; label: string; course: CourseId; rank: number; groups: (PublicGroupResult & GroupShowcase)[] }
   | { kind: 'stockgod'; label: string; course: CourseId; winners: { name: string; group: string; payout: number }[]; investors: number }
+  /** TNDA 天使投資獎（業師評分）：groups 為空＝管理員還沒選得獎組別 */
+  | { kind: 'angel'; label: string; course: CourseId; groups: (Partial<PublicGroupResult> & GroupShowcase & { group: string })[] }
   | { kind: 'ranking'; label: string; course: CourseId; results: PublicResults }
-  | { kind: 'finale'; label: string; courses: { course: CourseId; rocket: string[]; stockGods: { name: string; group: string; payout: number }[] }[] };
+  | {
+      kind: 'finale';
+      label: string;
+      courses: { course: CourseId; rocket: string[]; stockGods: { name: string; group: string; payout: number }[]; angel: string[] }[];
+    };
 
 export interface RecapCourse {
   course: CourseId;
@@ -177,6 +185,8 @@ export interface RecapCourse {
   investors: number;
   rocket: string[] | null;
   stockGods: { name: string; group: string; payout: number }[] | null;
+  /** TNDA 天使投資獎得獎組別（頒獎揭曉後才有） */
+  angel: string[] | null;
 }
 
 /** 業師總結的一頁 */
@@ -240,6 +250,8 @@ export interface AdminStudent {
 export interface AdminCourse {
   phase: Phase;
   groups: string[];
+  /** TNDA 天使投資獎得獎組別（管理員選的；未揭曉也看得到） */
+  angel: string[];
   students: AdminStudent[];
   /** 取消封盤後會回到哪個狀態（只有已封盤時有值） */
   reopenTo: 'open' | 'dark' | null;

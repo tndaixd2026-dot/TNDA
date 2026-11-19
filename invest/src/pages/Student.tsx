@@ -645,6 +645,7 @@ function MyResult({ pc, mine, name, role }: { pc: PublicCourse; mine: MyCourse; 
               </span>
               <span class="final-mult">×{g.multiplier}</span>
               {results.rocket.includes(g.group) && <span class="award-tag">一飛沖天</span>}
+              {pc.angel?.includes(g.group) && <span class="award-tag">天使投資</span>}
             </li>
           ))}
         </ol>
