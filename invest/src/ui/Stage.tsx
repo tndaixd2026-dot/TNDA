@@ -82,7 +82,7 @@ export function AwardsView({ scene, pub }: { scene: AwardScene; pub: PublicState
             <span class="display">Awards</span>
             <span class="stage-hero-zh">頒獎典禮</span>
           </h1>
-          <p class="stage-lead">一飛沖天獎 · 股神獎</p>
+          <p class="stage-lead">一飛沖天獎 · 股神獎 · TNDA 天使投資獎</p>
         </main>
       );
     case 'intro':
@@ -95,10 +95,10 @@ export function AwardsView({ scene, pub }: { scene: AwardScene; pub: PublicState
               <strong>{scene.groups}</strong> 組
             </span>
             <span>
-              <strong>{scene.investors}</strong> 位同學投資
+              <strong>{scene.investors}</strong> 人投資
             </span>
           </div>
-          <p class="stage-lead">從第 3 名開始揭曉 →</p>
+          <p class="stage-lead">從第 3 名開始 →</p>
         </main>
       );
     case 'podium':
@@ -113,7 +113,7 @@ export function AwardsView({ scene, pub }: { scene: AwardScene; pub: PublicState
           </div>
           <h1 class="stage-award-title">股神獎</h1>
           <div class="god-list">
-            {scene.winners.length === 0 && <p class="stage-lead">這一場沒有人投資</p>}
+            {scene.winners.length === 0 && <p class="stage-lead">無人投資</p>}
             {scene.winners.slice(0, 6).map((w) => (
               <div class="god" key={w.name}>
                 <span class="god-name">{w.name}</span>
@@ -125,7 +125,7 @@ export function AwardsView({ scene, pub }: { scene: AwardScene; pub: PublicState
             ))}
             {scene.winners.length > 6 && <p class="stage-lead">…等 {scene.winners.length} 人並列</p>}
           </div>
-          <p class="stage-note">個人報酬排名：{scene.investors} 位有投資的同學（業師、來賓不列入）· 報酬同分時，下注越快的人勝出</p>
+          <p class="stage-note">共 {scene.investors} 人投資 · 同分比下注快慢</p>
         </main>
       );
     case 'angel':
@@ -312,11 +312,11 @@ export function SlideView({ scene, step, total }: { scene: SlideScene; step: num
                     {c.joined}
                     <small> / {c.students}</small>
                   </strong>
-                  <em>位同學參與</em>
+                  <em>人參與</em>
                 </span>
                 <span>
                   <strong>{wan(c.invested)}</strong>
-                  <em>萬 投資總額</em>
+                  <em>萬 總投資</em>
                 </span>
               </div>
               {c.rocket && (

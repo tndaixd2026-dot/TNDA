@@ -74,7 +74,7 @@ export function Chart({ groups, points, now: coarseNow, offset = 0, live, shadeF
   if (points.length === 0) {
     return (
       <div class="chart" ref={ref}>
-        <div class="chart-empty">開盤後這裡會出現各組的走勢</div>
+        <div class="chart-empty">開盤後顯示走勢</div>
       </div>
     );
   }

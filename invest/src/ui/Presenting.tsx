@@ -53,8 +53,8 @@ export function PresentingBar({
       <div class="presenting-stage">
         <span class="presenting-stage-name">{p.stage ? p.stage.label : '講評結束'}</span>
         <span class="presenting-weight">
-          {nonStudent ? '學生投這組' : '現在投這組'} <strong>×{p.weight}</strong>
-          {nonStudent && <small>（業師、來賓 ×1）</small>}
+          {nonStudent ? '學生投' : '現在投'} <strong>×{p.weight}</strong>
+          {nonStudent && <small>（你 ×1）</small>}
         </span>
         {p.stage && (
           <span class="presenting-left">

@@ -32,7 +32,7 @@ export async function rpc<T>(fn: string, args: Record<string, unknown> = {}): Pr
       cache: 'no-store',
     });
   } catch {
-    throw new ApiError(0, 'network', '連線失敗，請檢查網路後再試一次');
+    throw new ApiError(0, 'network', '連線失敗，請再試一次');
   }
   const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
   if (!res.ok) {

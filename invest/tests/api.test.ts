@@ -902,7 +902,7 @@ describe('帳號與密碼', () => {
     expect(ok.me?.role).toBe('student');
     const bad = await call<Err>('invest_login', { name: '甲', password: '9999' });
     expect(bad.error).toBe('bad_password');
-    expect(bad.message).toContain('生日後四碼');
+    expect(bad.message).toContain('生日四碼');
     expect((await call<Err>('invest_login', { name: '路人', password: '0101' })).error).toBe('not_in_roster');
     // 沒有憑證不能投資、不能看自己的資料
     expect((await call<Err>('invest_me', { token: 'x'.repeat(64) })).error).toBe('bad_session');

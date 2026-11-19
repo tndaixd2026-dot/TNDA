@@ -1075,13 +1075,13 @@ begin
   end if;
   select * into acc from invest.account a where a.name_key = v_key for update;
   if not found or (acc.role = 'student' and not exists (select 1 from invest.roster r where r.name_key = v_key)) then
-    return invest.err('not_in_roster', format('名單中找不到「%s」，請確認姓名或洽助教', left(invest.norm_name(v_input), 40)));
+    return invest.err('not_in_roster', format('查無「%s」，請確認姓名', left(invest.norm_name(v_input), 40)));
   end if;
   if acc.pw_hash is null then
-    return invest.err('no_password', '這個帳號還沒設定密碼，請洽助教');
+    return invest.err('no_password', '尚未設定密碼，請洽助教');
   end if;
   if acc.locked_until is not null and acc.locked_until > now() then
-    return invest.err('locked', '密碼錯太多次，請 1 分鐘後再試，或洽助教');
+    return invest.err('locked', '錯太多次，1 分鐘後再試');
   end if;
   if invest.pw_hash(acc.salt, coalesce(v_pw, '')) <> acc.pw_hash then
     update invest.account
@@ -1089,8 +1089,8 @@ begin
            locked_until = case when acc.fails + 1 >= 5 then now() + interval '1 minute' end
      where name_key = v_key;
     return invest.err('bad_password',
-      case when acc.role = 'student' then '密碼錯誤：學生密碼是生日後四碼（例如 4 月 3 日 → 0403）'
-           else '密碼錯誤，請洽助教' end);
+      case when acc.role = 'student' then '密碼錯誤（生日四碼，如 0403）'
+           else '密碼錯誤' end);
   end if;
   update invest.account set fails = 0, locked_until = null where name_key = v_key;
   v_token := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
@@ -1109,7 +1109,7 @@ declare
   v_key text := invest.session_key(token);
   v_active text;
 begin
-  if v_key is null then return invest.err('bad_session', '登入已失效，請重新登入'); end if;
+  if v_key is null then return invest.err('bad_session', '請重新登入'); end if;
   select cfg.active into v_active from invest.config cfg where cfg.id = 1;
   perform invest.expire_due(v_active);
   perform invest.mark_present(v_active, v_key);
@@ -1131,14 +1131,14 @@ declare
   v_others numeric;
   v_current numeric;
 begin
-  if v_key is null then return invest.err('bad_session', '登入已失效，請重新登入'); end if;
+  if v_key is null then return invest.err('bad_session', '請重新登入'); end if;
   if v_course is null or v_course not in ('wed', 'thu') then
     return invest.err('bad_course', '場次錯誤');
   end if;
   v_role := invest.role_of(v_key);
   if v_role = 'student' then
     if not exists (select 1 from invest.roster r where r.name_key = v_key) then
-      return invest.err('not_in_roster', '名單中找不到這個名字，請確認姓名或洽助教');
+      return invest.err('not_in_roster', '查無此姓名');
     end if;
     select r.grp into v_own from invest.roster r where r.course = v_course and r.name_key = v_key;
     if v_own is null then
@@ -1150,14 +1150,14 @@ begin
   -- 鎖住這一場：同一場的下單一筆一筆處理，餘額不會被同時扣兩次
   select * into cs from invest.course co where co.course = v_course for update;
 
-  if cs.phase = 'pending' then return invest.err('not_open', '還沒開盤，開盤後才能投資'); end if;
-  if cs.phase = 'closed' then return invest.err('closed', '已經封盤，不能再調整'); end if;
+  if cs.phase = 'pending' then return invest.err('not_open', '還沒開盤'); end if;
+  if cs.phase = 'closed' then return invest.err('closed', '已封盤'); end if;
   if v_grp is null or not (v_grp = any (invest.groups(v_course))) then
     return invest.err('unknown_group', '沒有這個組別');
   end if;
-  if v_own is not null and v_grp = v_own then return invest.err('own_group', '不能投資自己那組'); end if;
+  if v_own is not null and v_grp = v_own then return invest.err('own_group', '不能投自己組'); end if;
   if v_amount is null or v_amount < 0 or v_amount <> trunc(v_amount) then
-    return invest.err('bad_amount', '金額必須是 0 以上的整數');
+    return invest.err('bad_amount', '金額格式錯誤');
   end if;
 
   select coalesce(sum(a.amount), 0) into v_others
@@ -1627,7 +1627,7 @@ begin
     end if;
     update invest.config set stage_mode = v_action, stage_step = 0 where id = 1;
   elsif v_action in ('next', 'prev', 'goto') then
-    if cfg.stage_mode = 'market' then return invest.err('bad_stage', '目前是盤況畫面，請先開始頒獎或業師總結'); end if;
+    if cfg.stage_mode = 'market' then return invest.err('bad_stage', '請先開始頒獎或總結'); end if;
     if cfg.stage_mode = 'awards' then n := jsonb_array_length(invest.award_steps());
     else select count(*) into n from invest.slide; end if;
     update invest.config
@@ -1798,7 +1798,7 @@ begin
   foreach c in array array['wed', 'thu'] loop
     if exists (select 1 from invest.course co where co.course = c and co.phase = 'closed')
        and exists (select 1 from invest.alloc a where a.course = c and a.name_key = v_key) then
-      return invest.err('closed', '這個帳號在已封盤的場次有投資，結果已凍結，不能刪除');
+      return invest.err('closed', '已封盤場次有投資，不能刪除');
     end if;
   end loop;
   delete from invest.alloc a where a.name_key = v_key;

@@ -118,15 +118,7 @@ export function Screen() {
   );
 }
 
-const PAYOUT_TICKER = [
-  '時段加權：簡報 ×1.4',
-  'Demo ×1.2',
-  '業師講評 ×1.1',
-  '名次倍率：第 1 名 ×3',
-  '第 2 名 ×2',
-  '第 3 名 ×1.5',
-  '報酬 ＝ 投資 × 時段加權 × 名次倍率',
-];
+const PAYOUT_TICKER = ['簡報 ×1.4', 'Demo ×1.2', '講評 ×1.1', '第 1 名 ×3', '第 2 名 ×2', '第 3 名 ×1.5'];
 
 /** 底部跑馬燈：未開盤跑規則、開盤中跑各組金額、暗盤只跑提示（不含任何金額） */
 function ScreenTicker({ pc }: { pc: PublicCourse }) {
@@ -141,9 +133,9 @@ function ScreenTicker({ pc }: { pc: PublicCourse }) {
     ));
     items.push(...PAYOUT_TICKER);
   } else if (pc.phase === 'dark') {
-    items = ['Dark Mode', '暗盤中', '金額與排名已隱藏', '倒數結束自動封盤', '還沒投完的同學快調整', ...PAYOUT_TICKER];
+    items = ['Dark Mode', '暗盤中', '金額隱藏', '倒數結束自動封盤', '快投完', ...PAYOUT_TICKER];
   } else {
-    items = ['Live Market', '掃 QR code 加入', '每人 100 萬虛擬資金', '只能投別組', '有信心可以 all in', ...PAYOUT_TICKER, '等待開盤'];
+    items = ['Live Market', '掃碼加入', '每人 100 萬', '只能投別組', '可以 all in', ...PAYOUT_TICKER, '等待開盤'];
   }
   return <Ticker items={items} class={`screen-ticker ticker-${pc.phase}`} />;
 }
@@ -152,11 +144,11 @@ function JoinBox({ joinUrl, big }: { joinUrl: string; big?: boolean }) {
   return (
     <div class={`join${big ? ' join-big' : ''}`}>
       {big && <WinBar title="JOIN.EXE" />}
-      <QrCode text={joinUrl} label="掃描加入投資" />
+      <QrCode text={joinUrl} label="掃碼加入" />
       <div class="join-text">
         <div class="join-title">手機掃碼加入</div>
         <div class="join-url">{joinUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')}</div>
-        <div class="join-hint">輸入姓名＋密碼（學生：生日後四碼）</div>
+        <div class="join-hint">姓名＋生日四碼</div>
       </div>
     </div>
   );
@@ -175,15 +167,15 @@ function PendingView({ pc, joinUrl, darkMs }: { pc: PublicCourse; joinUrl: strin
         <div class="pending-kicker">Standby · 等待開盤</div>
         <h1 class="pending-title">
           <span class="display">Live Market</span>
-          <span class="pending-title-zh">用 100 萬，投給你看好的組</span>
+          <span class="pending-title-zh">用 100 萬，投你看好的組</span>
         </h1>
         <div class="pending-info">
         <ol class="pending-rules">
           {[
-            '每人 100 萬虛擬資金，只能投別組',
-            '沒有單組上限，有信心可以 all in',
-            '沒投完的錢，封盤時從自己那組倒扣',
-            `最後 ${dark}暗盤：金額與排名隱藏`,
+            '每人 100 萬，只能投別組',
+            '沒有上限，可以 all in',
+            '沒投完的錢，從自己組扣',
+            `最後 ${dark}暗盤，金額隱藏`,
           ].map((t, i) => (
             <li key={t}>
               <span class="rule-num">{pad2(i + 1)}</span>
@@ -251,7 +243,7 @@ function LiveView({
         <div class="board-head" aria-hidden="true">
           <span>名次</span>
           <span>組別</span>
-          <span>金額 · 近 1 分鐘</span>
+          <span>金額 · 1 分鐘變化</span>
         </div>
         <ol class="board" ref={boardRef}>
           {ranked.map((g) => {
@@ -291,14 +283,14 @@ function DarkView({ pc, now, joinUrl }: { pc: PublicCourse; now: number; joinUrl
       <div class="dark-main">
         <Sparkle class="dark-spark" size="3rem" color="var(--tnda-orange)" />
         <div class="dark-kicker">
-          <span class="display">Dark</span> 暗盤中 · 金額與排名已隱藏
+          <span class="display">Dark</span> 暗盤中 · 金額隱藏
         </div>
         <div class={`dark-countdown${left <= 10_000 ? ' dark-final' : ''}`} role="timer" aria-live="off">
           <span key={Math.ceil(left / 1000)} class="tick">
             {countdown(left)}
           </span>
         </div>
-        <div class="dark-hint">倒數結束自動封盤 · 還沒投完的同學快調整</div>
+        <div class="dark-hint">倒數結束自動封盤</div>
         {presentingNow(pc, now) ? <PresentingBar pc={pc} now={now} size="screen" /> : <PayoutTable size="screen" compact />}
         <JoinBox joinUrl={joinUrl} />
       </div>
@@ -372,9 +364,9 @@ export function ResultsView({ pc, points, now }: { pc: PublicCourse; points: His
               </div>
             ))}
             {gods.length > 6 && <div class="award-sub">…等 {gods.length} 人並列</div>}
-            {gods.length === 0 && <div class="award-sub">這一場沒有人投資</div>}
+            {gods.length === 0 && <div class="award-sub">無人投資</div>}
           </div>
-          <div class="award-note">個人報酬排名：{results.investorCount} 位有投資的同學</div>
+          <div class="award-note">共 {results.investorCount} 人投資</div>
         </div>
       </section>
       <section class="final-table-panel">
@@ -405,7 +397,7 @@ export function ResultsView({ pc, points, now }: { pc: PublicCourse; points: His
             ))}
           </tbody>
         </table>
-        <div class="ft-note">單位：萬　倒扣 = 有登入的組員封盤時沒投完的錢（沒登入過的不倒扣）</div>
+        <div class="ft-note">單位：萬　倒扣＝組員沒投完的錢</div>
       </section>
       <section class="final-chart-panel">
         <WinBar title="MARKET_CHART.EXE" />
@@ -416,7 +408,7 @@ export function ResultsView({ pc, points, now }: { pc: PublicCourse; points: His
           live={false}
           shadeFrom={pc.darkAt}
           shadeTo={pc.closedAt}
-          label="完整走勢（含暗盤期間與倒扣）"
+          label="完整走勢"
         />
       </section>
       <div class="swatch-legend" aria-hidden="true">

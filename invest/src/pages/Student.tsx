@@ -97,7 +97,7 @@ function Login({ onLogin, notice }: { onLogin: (token: string) => void; notice: 
             <Cursor />
           </span>
         </h1>
-        <p class="login-lead">用 100 萬虛擬資金，投給你看好的組。</p>
+        <p class="login-lead">用 100 萬，投你看好的組</p>
       </header>
       <form class="card login-card" onSubmit={submit}>
         <WinBar title="LOGIN.EXE" />
@@ -109,7 +109,7 @@ function Login({ onLogin, notice }: { onLogin: (token: string) => void; notice: 
           class="text-input"
           value={value}
           onInput={(e) => setValue((e.target as HTMLInputElement).value)}
-          placeholder="例如：王小明"
+          placeholder="王小明"
           autocomplete="username"
           autoFocus={!intro}
           maxLength={40}
@@ -123,11 +123,11 @@ function Login({ onLogin, notice }: { onLogin: (token: string) => void; notice: 
           type="password"
           value={password}
           onInput={(e) => setPassword((e.target as HTMLInputElement).value)}
-          placeholder="學生：生日後四碼（例如 0403）"
+          placeholder="生日四碼，如 0403"
           autocomplete="current-password"
           maxLength={40}
         />
-        <p class="login-hint">學生：生日月日四碼（4 月 3 日 → 0403）· 業師、老師、來賓：TNDA</p>
+        <p class="login-hint">學生：生日四碼｜業師、來賓：TNDA</p>
         {error && (
           <p class="form-error" role="alert">
             {error}
@@ -139,11 +139,10 @@ function Login({ onLogin, notice }: { onLogin: (token: string) => void; notice: 
       </form>
       <ol class="rules">
         {[
-          '每堂課各有 100 萬，只能投給同堂課的其他組',
-          '沒有單組上限：很有信心可以 all in 100 萬',
-          '封盤時沒投完的錢，會從你們組的總額倒扣',
-          '最後 5 分鐘是暗盤：看不到各組金額，但還能調整',
-          '某組上台報告時投給它有加權：簡報 ×1.4、Demo ×1.2、講評 ×1.1',
+          '每場 100 萬，只能投別組',
+          '沒有上限，可以 all in',
+          '沒投完的錢，從自己組扣',
+          '最後 5 分鐘暗盤，金額隱藏',
         ].map((t, i) => (
           <li key={t}>
             <span class="rule-num">{pad2(i + 1)}</span>
@@ -270,9 +269,9 @@ function Market({ token, onLogout }: { token: string; onLogout: (msg?: string) =
       ) : (
         <Card class="notice-card">
           <p>
-            <strong>{courseLabel(course)}</strong>的名單裡沒有你，這一場不用投資。
+            <strong>{courseLabel(course)}</strong>沒有你的名單
           </p>
-          {me.courses[other] && <p class="muted">你在{courseLabel(other)}，輪到那一場時這裡會自動切換。</p>}
+          {me.courses[other] && <p class="muted">你在{courseLabel(other)}，輪到時自動切換</p>}
         </Card>
       )}
 
@@ -316,7 +315,7 @@ function CourseMarket(p: CourseMarketProps) {
     if (delta > 0) {
       // 規格：餘額不足時擋下並提示（伺服器也會再驗證一次）
       if (delta > remaining) {
-        p.notify(remaining > 0 ? `餘額不足，只剩 ${wan(remaining)} 萬` : '餘額不足，先從別組撤回一些', 'error');
+        p.notify(remaining > 0 ? `餘額不足，只剩 ${wan(remaining)} 萬` : '餘額不足', 'error');
         return;
       }
     } else {
@@ -329,7 +328,7 @@ function CourseMarket(p: CourseMarketProps) {
   /** 直接輸入金額：成功回傳 null，失敗回傳說明（顯示在輸入框下方，手機鍵盤打開時也看得到） */
   function setExact(group: string, amount: number): string | null {
     const cur = alloc[group] ?? 0;
-    if (amount - cur > remaining) return `餘額不足，這組最多可以投到 ${wan(cur + remaining)} 萬`;
+    if (amount - cur > remaining) return `最多可投 ${wan(cur + remaining)} 萬`;
     if (amount !== cur) p.submit(p.course, group, amount);
     return null;
   }
@@ -341,10 +340,10 @@ function CourseMarket(p: CourseMarketProps) {
           <WinBar title="WAITING.EXE" tone="orange" />
           <Eyebrow>Closed · 已封盤</Eyebrow>
           <p class="awaiting-text">
-            等待大螢幕頒獎揭曉
+            等待頒獎揭曉
             <Cursor />
           </p>
-          <p class="muted">各組最終金額與你的報酬，會在頒獎時和大螢幕同步公開。</p>
+          <p class="muted">頒獎時公布結果</p>
         </Card>
       )}
       {pc.phase === 'closed' && pc.revealed && <MyResult pc={pc} mine={mine} name={p.name} role={p.role} />}
@@ -369,24 +368,23 @@ function CourseMarket(p: CourseMarketProps) {
           <div class="meter-fill" style={{ width: `${Math.min(100, (invested / BUDGET) * 100)}%` }} />
         </div>
         <div class="wallet-sub">
-          已投資 {wan(invested)} / 100 萬 · {own ? `你是${own}` : '業師、來賓不參加股神獎'}
+          已投資 {wan(invested)} / 100 萬 · {own ? `你是${own}` : '不參加股神獎'}
         </div>
       </Card>
 
       <PresentingBar pc={pc} now={now} nonStudent={p.role !== 'student'} />
-      {pc.phase === 'pending' && <div class="banner banner-info">還沒開盤，老師開盤後就能下單。</div>}
+      {pc.phase === 'pending' && <div class="banner banner-info">等待開盤</div>}
       {pc.phase === 'dark' && (
         <div class="banner banner-dark">
-          <strong>暗盤 {countdown(darkLeft)}</strong> 後封盤 · 各組金額與排名已隱藏，你仍可調整投資
+          <strong>暗盤 {countdown(darkLeft)}</strong> 後封盤，仍可調整
         </div>
       )}
       {canTrade && remaining > 0 && (
         <div class="banner banner-warn">
-          還有 <strong>{wan(remaining)} 萬</strong>沒投。
-          {own ? `封盤時沒投完的錢會從${own}倒扣。` : '沒投完的錢不會倒扣，但也不會有報酬。'}
+          還有 <strong>{wan(remaining)} 萬</strong>沒投{own ? '，封盤會從自己組扣' : ''}
         </div>
       )}
-      {canTrade && remaining === 0 && <div class="banner banner-good">全部投完了，封盤前都還能調整。</div>}
+      {canTrade && remaining === 0 && <div class="banner banner-good">已投完，封盤前仍可調整</div>}
       {pc.phase !== 'closed' && <PayoutTable compact={pc.phase !== 'pending'} />}
 
       {canTrade && (
@@ -415,7 +413,7 @@ function CourseMarket(p: CourseMarketProps) {
             <li key={g.id} class={`stock${isOwn ? ' stock-own' : ''}${boost > 1 && canTrade ? ' stock-boost' : ''}`}>
               {boost > 1 && canTrade && (
                 <div class="stock-boost-tag">
-                  報告中 · 現在投這組 <strong>×{boost}</strong>
+                  報告中 · 現在投 <strong>×{boost}</strong>
                 </div>
               )}
               <div class="stock-head">
@@ -441,7 +439,7 @@ function CourseMarket(p: CourseMarketProps) {
                 </div>
               </div>
               {isOwn ? (
-                <div class="stock-own-note">自己的組 · 不能投資</div>
+                <div class="stock-own-note">自己的組</div>
               ) : pc.phase === 'closed' ? (
                 <div class="stock-trade">
                   <span class="hold-label">我投</span>
@@ -484,7 +482,7 @@ function CourseMarket(p: CourseMarketProps) {
               )}
               {!isOwn && cur > 0 && weighted !== null && weighted !== cur && (
                 <div class="stock-weighted">
-                  時段加權後 <strong>{wan(weighted)} 萬</strong>
+                  加權後 <strong>{wan(weighted)} 萬</strong>
                 </div>
               )}
               {!isOwn && canTrade && p.editing === g.id && (
@@ -514,7 +512,7 @@ function AmountEditor(p: { initial: number; max: number; onSave: (amount: number
   function save(e: Event) {
     e.preventDefault();
     if (parsed === null) {
-      setError('請輸入 0 以上的金額（單位：萬，小數點後最多 4 位，最小 1 元）');
+      setError('請輸入金額（萬）');
       return;
     }
     setError(p.onSave(parsed));
@@ -556,7 +554,7 @@ function AmountEditor(p: { initial: number; max: number; onSave: (amount: number
           最多 {wan(p.max)}
         </button>
       </div>
-      <p class="amount-preview muted">{parsed !== null ? `= ${yuanText(parsed)}` : '單位：萬（例如 12.3456 萬 = 123,456 元）'}</p>
+      <p class="amount-preview muted">{parsed !== null ? `= ${yuanText(parsed)}` : '單位：萬'}</p>
       {error && (
         <p class="form-error" role="alert">
           {error}
@@ -588,13 +586,13 @@ function MyResult({ pc, mine, name, role }: { pc: PublicCourse; mine: MyCourse; 
             </div>
             <div class="result-rank">
               {mine.result.rank !== null
-                ? `第 ${mine.result.rank} 名 / ${mine.result.of} 位有投資的同學`
-                : '業師、老師、來賓不列入股神獎排名'}
+                ? `第 ${mine.result.rank} 名 / ${mine.result.of} 人`
+                : '不列入股神獎'}
               {role === 'student' && isGod && <span class="award-tag">股神獎</span>}
             </div>
           </>
         ) : (
-          <p class="muted">你這一場沒有投資，不列入個人排名。</p>
+          <p class="muted">這場沒有投資</p>
         )}
         {lines.length > 0 && (
           <table class="mini-table">
@@ -627,13 +625,13 @@ function MyResult({ pc, mine, name, role }: { pc: PublicCourse; mine: MyCourse; 
         )}
         {(mine.deducted ?? 0) > 0 && (
           <p class="muted">
-            你有 {wan(mine.deducted ?? 0)} 萬沒投完，已從{splitGroupLabel(mine.group ?? '').short}倒扣，也不計入報酬。
+            {wan(mine.deducted ?? 0)} 萬沒投完，已從自己組扣
           </p>
         )}
       </Card>
       <Card>
         <h2 class="card-title">
-          <Eyebrow>Final Ranking · 各組最終排名</Eyebrow>
+          <Eyebrow>Final Ranking · 最終排名</Eyebrow>
         </h2>
         <ol class="final-list">
           {results.groups.map((g) => (
@@ -658,8 +656,8 @@ function OtherResult({ course, mine }: { course: CourseId; mine: MyCourse }) {
   if (!mine.result) return null;
   return (
     <Card class="other-result">
-      {courseLabel(course)}結果：報酬 <strong>{wan(mine.result.payout)} 萬</strong>
-      {mine.result.rank !== null && `，第 ${mine.result.rank} 名 / ${mine.result.of} 人`}
+      {courseLabel(course).split('・')[0]}：<strong>{wan(mine.result.payout)} 萬</strong>
+      {mine.result.rank !== null && ` · 第 ${mine.result.rank} / ${mine.result.of} 名`}
     </Card>
   );
 }
