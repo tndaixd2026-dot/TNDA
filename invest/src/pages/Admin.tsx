@@ -150,7 +150,7 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
   function switchCourse(c: CourseId) {
     if (c === course) return;
     const cur = pub.courses[course];
-    if ((cur.phase === 'open' || cur.phase === 'dark') && !confirm(`${courseLabel(course)}還在進行中，切換後學生端與大螢幕都會改顯示${courseLabel(c)}。確定切換？`)) return;
+    if ((cur.phase === 'open' || cur.phase === 'dark') && !confirm(`${courseLabel(course)}進行中，切到${courseLabel(c)}？`)) return;
     void act('invest_admin_set_active', { course: c }, `已切換到${courseLabel(c)}`);
   }
 
@@ -160,21 +160,21 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
 
   function phase(action: 'open' | 'dark' | 'close' | 'reopen') {
     const msg = {
-      open: `${courseLabel(course)}開盤？開盤後學生就能開始投資。`,
-      dark: `進入暗盤？${darkLabel}後自動封盤，期間大螢幕與學生端都會隱藏各組金額與排名。`,
-      close: `立即封盤${courseLabel(course)}？封盤後無法再投資，結果會在頒獎時揭曉。`,
-      reopen: `取消封盤？已揭曉的結果會撤回，回到「${reopenLabel}」，所有人的投資都保留。`,
+      open: `${courseLabel(course)}開盤？`,
+      dark: `進入暗盤？${darkLabel}後自動封盤`,
+      close: `立即封盤${courseLabel(course)}？`,
+      reopen: `取消封盤，回到${reopenLabel}？投資保留`,
     }[action];
     if (!confirm(msg)) return;
     void act(
       'invest_admin_phase',
       { course, action },
-      { open: '已開盤', dark: '已進入暗盤', close: '已封盤，等待頒獎揭曉', reopen: `已取消封盤，回到${reopenLabel}` }[action],
+      { open: '已開盤', dark: '已進入暗盤', close: '已封盤', reopen: `已回到${reopenLabel}` }[action],
     );
   }
 
   function reset() {
-    const typed = prompt(`重置${courseLabel(course)}會清除這一場所有投資、走勢與結果（名單保留），回到未開盤。\n確定請輸入「重置」：`);
+    const typed = prompt(`重置${courseLabel(course)}：清除投資與結果，名單保留。\n輸入「重置」確認：`);
     if (typed !== '重置') return;
     void act('invest_admin_reset', { course }, '已重置');
   }
@@ -222,7 +222,7 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
         <h2 class="card-title">
           <Eyebrow>Session · 目前場次</Eyebrow>
         </h2>
-        <p class="muted">學生端與大螢幕會顯示這裡選的場次。</p>
+        <p class="muted">手機與大螢幕顯示這一場</p>
         <div class="course-switch">
           {COURSE_IDS.map((c) => (
             <button key={c} class={`course-btn${c === course ? ' course-on' : ''}`} disabled={busy} onClick={() => switchCourse(c)} aria-pressed={c === course}>
@@ -248,13 +248,13 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
             開盤
           </button>
           <button class="btn btn-solid btn-lg" disabled={busy || pc.phase !== 'open'} onClick={() => phase('dark')}>
-            進入暗盤（{darkLabel}後自動封盤）
+            進入暗盤 · {darkLabel}
           </button>
           <button class="btn btn-danger btn-lg" disabled={busy || (pc.phase !== 'open' && pc.phase !== 'dark')} onClick={() => phase('close')}>
             立即封盤
           </button>
           <button class="btn btn-outline btn-lg" disabled={busy || pc.phase !== 'closed'} onClick={() => phase('reopen')}>
-            取消封盤{pc.phase === 'closed' ? `（回到${reopenLabel}）` : ''}
+            取消封盤
           </button>
         </div>
         {pc.phase === 'closed' && (
@@ -289,7 +289,7 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
         </div>
         {pending.length > 0 && (
           <>
-            <h3 class="sub-title">還沒投完（有登入的人封盤時會從自己組倒扣；沒登入過的不倒扣）</h3>
+            <h3 class="sub-title">還沒投完（未登入者不倒扣）</h3>
             <table class="data-table">
               <thead>
                 <tr>
@@ -305,7 +305,7 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
                     <td>{s.name}</td>
                     <td>{splitGroupLabel(s.group).short}</td>
                     <td class="num">{wan(s.remaining)} 萬</td>
-                    <td>{s.joined ? '已登入・會倒扣' : <span class="muted">未登入・不倒扣</span>}</td>
+                    <td>{s.joined ? '已登入' : <span class="muted">未登入</span>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -328,7 +328,7 @@ function AdminPanel({ pw, onLogout }: { pw: string; onLogout: () => void }) {
         <h2 class="card-title">
           <Eyebrow>Rehearsal · 彩排工具</Eyebrow>
         </h2>
-        <p class="muted">清除{courseLabel(course)}的所有投資、走勢與結果，回到「未開盤」。名單不受影響。</p>
+        <p class="muted">清除投資與結果，名單保留</p>
         <button class="btn btn-danger" disabled={busy} onClick={reset}>
           重置{courseLabel(course)}資料
         </button>
@@ -455,7 +455,7 @@ function RosterCard({
 
       <h3 class="sub-title">匯入名單</h3>
       <p class="muted">
-        格式：每行「姓名, 課堂, 組別」，課堂填 週三 或 週四。可以上傳 CSV 檔，或從試算表直接複製貼上。CSV 裡有出現的課堂才會被取代。
+        每行「姓名, 課堂, 組別」，課堂填週三或週四
       </p>
       <input type="file" accept=".csv,text/csv,text/plain" onChange={loadFile} />
       <textarea
@@ -560,8 +560,7 @@ function BoardCard({
         <Eyebrow>Attendance Board · 出席率看板（登入動畫）</Eyebrow>
       </h2>
       <p class="muted">
-        學生打開登入頁時，會先看到一段像股市報價看板的動畫：每位學生是一檔股票，數字是累計出席率，從第一週快轉到最近一週。
-        看板只顯示目前場次的學生。<strong>任何打開學生頁的人都看得到姓名與出席率</strong>，不想公開時請關閉。
+        登入前播放出席率看板。<strong>會公開姓名與出席率</strong>
       </p>
       <div class="stat-row">
         {COURSE_IDS.map((c) => (
@@ -598,8 +597,7 @@ function BoardCard({
 
       <h3 class="sub-title">匯入出席紀錄</h3>
       <p class="muted">
-        直接上傳 Notion「出勤紀錄」資料庫匯出的 CSV，或自己整理成「課堂, 姓名, 週次, 狀態」。課堂填 週三／VSAI 或 週四／跨域；狀態填 參、遲、假、缺（未紀錄會略過）。
-        出席率 = (參 + 遲) ÷ (參 + 遲 + 假 + 缺)，請假也算未出席。匯入會取代全部舊的出席紀錄。
+        Notion 出勤 CSV，或「課堂, 姓名, 週次, 狀態（參遲假缺）」
       </p>
       <input type="file" accept=".csv,text/csv,text/plain" onChange={loadFile} />
       <textarea
@@ -639,7 +637,7 @@ function BoardCard({
           disabled={busy || (board.wed.students === 0 && board.thu.students === 0)}
           onClick={() =>
             run(async () => {
-              if (!confirm('清除全部出席紀錄？登入動畫會改成只播標題。')) return;
+              if (!confirm('清除全部出席紀錄？')) return;
               await send(true, true);
               await reload();
               notify('已清除出席紀錄');

@@ -31,7 +31,7 @@ export function AngelCard({ ov, act, busy }: { ov: AdminOverview; act: Act; busy
     <Card class="angel-card">
       <Eyebrow>Angel Award · 業師評分</Eyebrow>
       <h2 class="card-title">TNDA 天使投資獎</h2>
-      <p class="muted">業師評分後，點選每一場的得獎組別（點兩組＝並列，再點一次取消）。頒獎時走到「TNDA 天使投資獎」那一步才會在大螢幕揭曉，之前學生手機與大螢幕都看不到。</p>
+      <p class="muted">點選得獎組（可並列），頒獎時才揭曉</p>
       {COURSE_IDS.map((c) => {
         const cur = ov.courses[c].angel;
         const groups = ov.courses[c].groups;
@@ -76,8 +76,8 @@ export function PresentCard({ pc, now, act, busy }: { pc: PublicCourse; now: num
     const label = splitGroupLabel(g).short;
     if (live && live.stage && live.group !== g) {
       const curLabel = splitGroupLabel(live.group).short;
-      if (!confirm(`${curLabel}還在「${live.stage.label}」（剩 ${countdown(live.leftMs)}），確定換${label}上台？${curLabel}的加權時段會立即結束。`)) return;
-    } else if (pc.presented[g] && !confirm(`${label}已經報告過，要重新開始計時嗎？`)) {
+      if (!confirm(`${curLabel}還在${live.stage.label}（剩 ${countdown(live.leftMs)}），換${label}上台？`)) return;
+    } else if (pc.presented[g] && !confirm(`${label}重新計時？`)) {
       return;
     }
     void act('invest_admin_present', { course: pc.course, grp: g }, `${label}開始報告：簡報 ×1.4`);
@@ -86,14 +86,14 @@ export function PresentCard({ pc, now, act, busy }: { pc: PublicCourse; now: num
   return (
     <Card class="present-card">
       <Eyebrow>Presenting · 報告順序</Eyebrow>
-      <h2 class="card-title">每組上台時按「開始報告」</h2>
+      <h2 class="card-title">每組上台按「開始報告」</h2>
       <p class="muted">
-        按下後自動計時：簡報 3 分鐘 ×1.4 → Demo 7 分鐘 ×1.2 → 業師講評 6 分鐘 ×1.1，之後 ×1。換下一組上台時，上一組的加權立即結束。
+        簡報 3 分 ×1.4 → Demo 7 分 ×1.2 → 講評 6 分 ×1.1，自動計時
       </p>
       {live && <PresentingBar pc={pc} now={now} />}
       <div class="control-buttons">
         <button class="btn btn-accent btn-lg" disabled={busy || closed || !next} onClick={() => next && start(next)}>
-          {next ? `▶ 下一組上台：${splitGroupLabel(next).short}` : '所有組都報告過了'}
+          {next ? `▶ 下一組上台：${splitGroupLabel(next).short}` : '全部報告完畢'}
         </button>
         <button
           class="btn btn-outline btn-lg"
@@ -151,9 +151,9 @@ export function StageCard({ ov, act, busy }: { ov: AdminOverview; act: Act; busy
   function startAwards() {
     const open = COURSE_IDS.filter((c) => ov.courses[c].phase !== 'closed');
     const warn = open.length
-      ? `${open.map(courseLabel).join('、')}還沒封盤，頒獎只會包含已封盤的場次。\n`
+      ? `${open.map(courseLabel).join('、')}還沒封盤，不會頒到。\n`
       : '';
-    if (!confirm(`${warn}開始頒獎？大螢幕會切到頒獎典禮開場，按「下一步」一步一步揭曉。`)) return;
+    if (!confirm(`${warn}開始頒獎？`)) return;
     void act('invest_admin_stage', { action: 'awards' }, '大螢幕：頒獎典禮');
   }
 
@@ -179,7 +179,7 @@ export function StageCard({ ov, act, busy }: { ov: AdminOverview; act: Act; busy
           class={`btn ${st.mode === 'summary' ? 'btn-solid' : ''}`}
           disabled={busy}
           onClick={() => {
-            if (confirm('切到業師總結？大螢幕會顯示第一頁總結投影片。')) void act('invest_admin_stage', { action: 'summary' }, '大螢幕：業師總結');
+            if (confirm('切到業師總結？')) void act('invest_admin_stage', { action: 'summary' }, '大螢幕：業師總結');
           }}
         >
           {st.mode === 'summary' ? '總結從第一頁開始' : '業師總結'}
@@ -195,7 +195,7 @@ export function StageCard({ ov, act, busy }: { ov: AdminOverview; act: Act; busy
               下一步 →<small>{labels[st.step + 1] ?? '（已是最後）'}</small>
             </button>
           </div>
-          <p class="muted">也可以用鍵盤或簡報筆：→／PageDown 下一步，←／PageUp 上一步。</p>
+          <p class="muted">簡報筆或鍵盤 ← → 也能切換</p>
           <ol class="stage-steps">
             {labels.map((l, i) => (
               <li key={i} class={i === st.step ? 'on' : i < st.step ? 'done' : ''}>
@@ -210,7 +210,7 @@ export function StageCard({ ov, act, busy }: { ov: AdminOverview; act: Act; busy
       )}
       {st.mode === 'market' && (
         <p class="muted">
-          封盤後各組金額與結果先不公開（大螢幕輪播各組作品、學生手機顯示「等待頒獎」）。兩場都封盤後按「開始頒獎」，揭曉到某一場的第 1 名時，該場結果才同步公開到學生手機。
+          封盤後結果先不公開，揭曉第 1 名時才同步到手機。
           {closed.length > 0 && ` 已封盤：${closed.map(courseLabel).join('、')}。`}
         </p>
       )}
@@ -228,7 +228,7 @@ export function GroupsCard({ ov, act, busy, notify }: { ov: AdminOverview; act: 
       <h2 class="card-title">
         <Eyebrow>Showcase · 各組作品</Eyebrow>
       </h2>
-      <p class="muted">每組的作品封面照片與題目 slogan，會在暗盤倒數時輪播，頒獎時和組員名單一起顯示。照片會自動縮小（建議 16:9 橫式）。</p>
+      <p class="muted">暗盤輪播、頒獎時顯示。照片建議 16:9</p>
       <div class="btn-row">
         {COURSE_IDS.map((c) => (
           <button key={c} class={`seg${c === course ? ' seg-on' : ''}`} onClick={() => setCourse(c)}>
@@ -240,7 +240,7 @@ export function GroupsCard({ ov, act, busy, notify }: { ov: AdminOverview; act: 
         {list.map((g, i) => (
           <GroupRow key={`${course}|${g.group}`} course={course} index={i} info={g} act={act} busy={busy} notify={notify} />
         ))}
-        {list.length === 0 && <p class="muted">這一場還沒有名單。</p>}
+        {list.length === 0 && <p class="muted">還沒有名單</p>}
       </div>
     </Card>
   );
@@ -289,7 +289,7 @@ function GroupRow({
         </div>
         <label class="field-label">題目／slogan</label>
         <div class="amount-editor-row">
-          <input class="text-input" value={slogan} maxLength={200} placeholder="例如：讓每一次觸碰都被看見" onInput={(e) => setSlogan((e.target as HTMLInputElement).value)} />
+          <input class="text-input" value={slogan} maxLength={200} placeholder="讓每一次觸碰都被看見" onInput={(e) => setSlogan((e.target as HTMLInputElement).value)} />
           <button class="btn btn-primary" disabled={busy || slogan === info.slogan} onClick={() => act('invest_admin_group', { course, grp: info.group, slogan }, `${short} slogan 已儲存`)}>
             儲存
           </button>
@@ -372,13 +372,13 @@ export function AccountsCard({ ov, pw, onChanged, notify }: { ov: AdminOverview;
   }
 
   function resetPassword(name: string, r: Role) {
-    const next = prompt(`設定「${name}」的新密碼${r === 'student' ? '（學生：生日後四碼）' : '（預設 TNDA）'}：`, r === 'student' ? '' : 'TNDA');
+    const next = prompt(`「${name}」的新密碼：`, r === 'student' ? '' : 'TNDA');
     if (!next) return;
-    void save([{ name, role: r, password: next }], `已重設「${name}」的密碼，舊的登入會被登出`);
+    void save([{ name, role: r, password: next }], `已重設「${name}」的密碼`);
   }
 
   async function remove(name: string) {
-    if (!confirm(`刪除「${name}」的帳號？他在進行中場次的投資也會一起刪除。`)) return;
+    if (!confirm(`刪除「${name}」？投資也會一起刪除`)) return;
     setBusy(true);
     try {
       await rpc('invest_admin_account_delete', { pw, name });
@@ -397,7 +397,7 @@ export function AccountsCard({ ov, pw, onChanged, notify }: { ov: AdminOverview;
         <Eyebrow>Accounts · 帳號密碼</Eyebrow>
       </h2>
       <p class="muted">
-        學生：帳號＝姓名，密碼＝生日月日四碼（4 月 3 日 → 0403）。業師、老師、來賓：帳號＝姓名，密碼預設 TNDA；兩場都能投、每場 100 萬，投資算進各組總額，但不倒扣、不參加股神獎。連續輸錯 5 次會鎖 1 分鐘。
+        學生：生日四碼｜業師、來賓：TNDA｜錯 5 次鎖 1 分鐘
       </p>
       <div class="stat-row">
         <div class="stat">
@@ -415,7 +415,7 @@ export function AccountsCard({ ov, pw, onChanged, notify }: { ov: AdminOverview;
         </div>
       </div>
       {noPw.length > 0 && (
-        <p class="form-error">還沒設定密碼（不能登入）：{noPw.map((a) => a.name).join('、')}</p>
+        <p class="form-error">未設密碼：{noPw.map((a) => a.name).join('、')}</p>
       )}
 
       <h3 class="sub-title">業師、老師、來賓</h3>
@@ -435,7 +435,7 @@ export function AccountsCard({ ov, pw, onChanged, notify }: { ov: AdminOverview;
         ))}
       </ul>
       <label class="field-label">新增帳號（一行一個姓名）</label>
-      <textarea class="text-area" rows={3} value={names} placeholder={'例如：\n王老師\n陳業師'} onInput={(e) => setNames((e.target as HTMLTextAreaElement).value)} />
+      <textarea class="text-area" rows={3} value={names} placeholder={'王老師\n陳業師'} onInput={(e) => setNames((e.target as HTMLTextAreaElement).value)} />
       <div class="btn-row">
         <button class={`seg${role === 'mentor' ? ' seg-on' : ''}`} onClick={() => setRole('mentor')}>
           業師／老師
@@ -450,7 +450,7 @@ export function AccountsCard({ ov, pw, onChanged, notify }: { ov: AdminOverview;
 
       <h3 class="sub-title">學生密碼</h3>
       <details class="roster-course">
-        <summary>學生名單（{students.length} 位）· 點姓名旁的「改密碼」單獨設定</summary>
+        <summary>學生名單（{students.length} 位）</summary>
         <ul class="account-list">
           {students.map((a) => (
             <li key={a.name}>
@@ -527,7 +527,7 @@ export function SlidesCard({ ov, act, busy, notify }: { ov: AdminOverview; act: 
       <h2 class="card-title">
         <Eyebrow>Summary · 業師總結投影片</Eyebrow>
       </h2>
-      <p class="muted">頒獎結束後按「業師總結」，大螢幕一頁一頁顯示這些投影片（和頒獎一樣用「下一步」切換）。「數字回顧」頁會自動帶入兩場的參與人數、投資總額與得獎者。內文一行一點。</p>
+      <p class="muted">頒獎後按「業師總結」播放；數字回顧自動帶入</p>
       <ol class="slide-admin-list">
         {draft.map((s, i) => (
           <li key={s.key} class="slide-admin">
@@ -557,7 +557,7 @@ export function SlidesCard({ ov, act, busy, notify }: { ov: AdminOverview; act: 
               </span>
             </div>
             <input class="text-input" value={s.title} placeholder="標題" maxLength={200} onInput={(e) => update(i, { title: (e.target as HTMLInputElement).value })} />
-            <input class="text-input" value={s.subtitle} placeholder="副標（例如業師姓名、公司）" maxLength={300} onInput={(e) => update(i, { subtitle: (e.target as HTMLInputElement).value })} />
+            <input class="text-input" value={s.subtitle} placeholder="副標（業師姓名、公司）" maxLength={300} onInput={(e) => update(i, { subtitle: (e.target as HTMLInputElement).value })} />
             {s.kind !== 'recap' && (
               <textarea class="text-area" rows={4} value={s.body} placeholder="內文，一行一點" maxLength={3000} onInput={(e) => update(i, { body: (e.target as HTMLTextAreaElement).value })} />
             )}

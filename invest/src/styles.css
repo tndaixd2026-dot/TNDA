@@ -4175,3 +4175,8 @@ html.screen-mode body {
   text-align: center;
   gap: 1rem;
 }
+/* 個人報酬：數字和「萬」不分行；小數多時自動縮小 */
+.result-value {
+  white-space: nowrap;
+  font-size: clamp(2rem, 13vw, 3rem);
+}

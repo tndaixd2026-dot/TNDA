@@ -38,20 +38,18 @@ export function PayoutTable({ size = 'phone', compact = false }: { size?: 'scree
     <section class={`payout payout-${size}${compact ? ' payout-compact' : ''}`} aria-label="加權與倍率">
       <div class="payout-head">
         <span class="payout-title">① 時段加權</span>
-        <span class="payout-sub">在某組報告時投給「那一組」，下單當下決定</span>
+        <span class="payout-sub">某組上台時投它</span>
       </div>
       <Tiers items={STAGE_TIERS} />
       <div class="payout-head payout-head-2">
         <span class="payout-title">② 名次倍率</span>
-        <span class="payout-sub">封盤後依各組加權後總額排名</span>
+        <span class="payout-sub">封盤後依排名</span>
       </div>
       <Tiers items={RANK_TIERS} />
       {!compact && (
         <p class="payout-formula">
-          各組總額 ＝ 每筆投資 × 時段加權（決定<strong>一飛沖天獎</strong>）
-          <br />
-          你的報酬 ＝ 每筆投資 × 時段加權 × 名次倍率，最高的人拿<strong>股神獎</strong>
-          <span class="payout-eg">例：在第 1 名那組簡報時投 50 萬 → 50 × 1.4 × 3 ＝ 210 萬。同分時，下注越快的人勝出</span>
+          報酬 ＝ 投資 × 時段加權 × 名次倍率
+          <span class="payout-eg">例：簡報時投第 1 名 50 萬 → 210 萬</span>
         </p>
       )}
     </section>
