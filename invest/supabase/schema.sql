@@ -142,6 +142,10 @@ alter table invest.course add column if not exists presenting_at timestamptz;
 -- 各組最近一次開始報告的時間（組別 → 毫秒），管理員頁顯示「已報告」
 alter table invest.course add column if not exists presented jsonb not null default '{}'::jsonb;
 
+-- TNDA 天使投資獎（業師評分的組別獎）：管理員選得獎組別；頒獎走到這一步才公開
+alter table invest.course add column if not exists angel jsonb not null default '[]'::jsonb;
+alter table invest.course add column if not exists angel_revealed boolean not null default false;
+
 -- 每一筆投資（由 alloc 的觸發器維護，加總永遠等於 alloc.amount）：
 -- 下單當下決定時段加權；撤回時先扣最晚的
 create table if not exists invest.lot (
@@ -646,6 +650,7 @@ begin
     'presenting', case when cs.presenting is not null and cs.phase <> 'closed' then
                     jsonb_build_object('group', cs.presenting, 'startedAt', invest.ms(cs.presenting_at)) end,
     'presented', cs.presented,
+    'angel', case when cs.angel_revealed then cs.angel end,
     'groups', v_groups,
     'students', (select count(*) from invest.roster r where r.course = c),
     'joined', (select count(*) from invest.roster r where r.course = c and invest.is_present(c, r.name_key)),
@@ -683,6 +688,7 @@ begin
     end loop;
     steps := steps || jsonb_build_array(
       jsonb_build_object('kind', 'stockgod', 'course', c, 'label', invest.course_label(c) || '：股神獎'),
+      jsonb_build_object('kind', 'angel', 'course', c, 'label', invest.course_label(c) || '：TNDA 天使投資獎'),
       jsonb_build_object('kind', 'ranking', 'course', c, 'label', invest.course_label(c) || '：完整排名'));
   end loop;
   return steps || jsonb_build_array(jsonb_build_object('kind', 'finale', 'label', '頒獎結束'));
@@ -712,6 +718,15 @@ begin
     v := v || jsonb_build_object(
       'winners', invest.public_results(cs.results) -> 'stockGods',
       'investors', jsonb_array_length(cs.results -> 'investors'));
+  elsif st ->> 'kind' = 'angel' then
+    -- 還沒選得獎組別時 groups 是空的（大螢幕顯示「業師評分中」）
+    v := v || jsonb_build_object('groups', coalesce((
+      select jsonb_agg(jsonb_build_object('group', a.grp)
+                       || coalesce((select (g - 'deductions') from jsonb_array_elements(cs.results -> 'groups') g
+                                    where g ->> 'group' = a.grp), '{}'::jsonb)
+                       || invest.group_public(c, a.grp)
+                       order by invest.group_num(a.grp) nulls last)
+      from jsonb_array_elements_text(cs.angel) as a(grp)), '[]'::jsonb));
   elsif st ->> 'kind' = 'ranking' then
     v := v || jsonb_build_object('results', invest.public_results(cs.results));
   elsif st ->> 'kind' = 'finale' then
@@ -719,7 +734,8 @@ begin
       select jsonb_agg(jsonb_build_object(
                'course', co.course,
                'rocket', co.results -> 'rocket',
-               'stockGods', invest.public_results(co.results) -> 'stockGods') order by co.course desc)
+               'stockGods', invest.public_results(co.results) -> 'stockGods',
+               'angel', case when co.angel_revealed then co.angel else '[]'::jsonb end) order by co.course desc)
       from invest.course co where co.phase = 'closed' and co.results is not null and co.revealed), '[]'::jsonb));
   end if;
   return v;
@@ -736,7 +752,8 @@ language sql stable set search_path = '' as $$
            'invested', (select coalesce(sum(a.amount), 0) from invest.alloc a where a.course = co.course),
            'investors', (select count(distinct a.name_key) from invest.alloc a where a.course = co.course),
            'rocket', case when co.revealed then co.results -> 'rocket' end,
-           'stockGods', case when co.revealed then invest.public_results(co.results) -> 'stockGods' end)
+           'stockGods', case when co.revealed then invest.public_results(co.results) -> 'stockGods' end,
+           'angel', case when co.angel_revealed then co.angel end)
          order by co.course desc), '[]'::jsonb)
   from invest.course co
 $$;
@@ -796,11 +813,18 @@ begin
   select * into cfg from invest.config c where c.id = 1;
   if cfg.stage_mode = 'summary' then
     update invest.course set revealed = true where phase = 'closed' and results is not null and not revealed;
+    update invest.course set angel_revealed = true
+     where phase = 'closed' and results is not null and not angel_revealed and jsonb_array_length(angel) > 0;
   elsif cfg.stage_mode = 'awards' then
     update invest.course co set revealed = true
      where co.phase = 'closed' and co.results is not null and not co.revealed
        and exists (select 1 from jsonb_array_elements(invest.award_steps()) with ordinality as x(s, o)
                    where x.s ->> 'kind' = 'rocket' and x.s ->> 'course' = co.course and x.o - 1 <= cfg.stage_step);
+    -- 天使投資獎：走到（或走過）這一場的天使投資獎那一步，且已選了得獎組別，才公開
+    update invest.course co set angel_revealed = true
+     where co.phase = 'closed' and co.results is not null and not co.angel_revealed and jsonb_array_length(co.angel) > 0
+       and exists (select 1 from jsonb_array_elements(invest.award_steps()) with ordinality as x(s, o)
+                   where x.s ->> 'kind' = 'angel' and x.s ->> 'course' = co.course and x.o - 1 <= cfg.stage_step);
   end if;
 end
 $$;
@@ -899,6 +923,7 @@ language sql stable set search_path = '' as $$
   select jsonb_build_object(
     'phase', cs.phase,
     'groups', to_jsonb(invest.groups(c)),
+    'angel', cs.angel,
     'students', coalesce((
       select jsonb_agg(jsonb_build_object(
                'name', s.name, 'group', s.grp, 'invested', s.inv, 'remaining', 1000000 - s.inv,
@@ -1237,12 +1262,14 @@ begin
       update invest.course
          set phase = 'dark',
              dark_ends_at = now() + make_interval(secs => cs.dark_left_ms / 1000.0),
-             results = null, closed_at = null, closed_from = null, dark_left_ms = null, revealed = false
+             results = null, closed_at = null, closed_from = null, dark_left_ms = null, revealed = false,
+             angel_revealed = false
        where invest.course.course = v_course;
     else
       update invest.course
          set phase = 'open', dark_at = null, dark_ends_at = null, dark_history_id = null,
-             results = null, closed_at = null, closed_from = null, dark_left_ms = null, revealed = false
+             results = null, closed_at = null, closed_from = null, dark_left_ms = null, revealed = false,
+             angel_revealed = false
        where invest.course.course = v_course;
     end if;
 
@@ -1284,6 +1311,34 @@ begin
 end
 $$;
 
+-- TNDA 天使投資獎（業師評分）：選這一場的得獎組別（可複選＝並列；傳空陣列＝清除）
+create or replace function public.invest_admin_angel(pw text, course text, groups jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = '' as $$
+declare
+  v_course text := course;
+  v_groups jsonb := coalesce(groups, '[]'::jsonb);
+  g text;
+  v_clean jsonb := '[]'::jsonb;
+begin
+  if not invest.check_admin(pw) then return invest.err('unauthorized', '管理員密碼錯誤'); end if;
+  if v_course is null or v_course not in ('wed', 'thu') then return invest.err('bad_course', '場次錯誤'); end if;
+  if jsonb_typeof(v_groups) <> 'array' then return invest.err('bad_groups', '組別格式錯誤'); end if;
+  for g in select jsonb_array_elements_text(v_groups) loop
+    if not (g = any (invest.groups(v_course))) then return invest.err('unknown_group', '沒有這個組別'); end if;
+    if not v_clean ? g then v_clean := v_clean || to_jsonb(g); end if;
+  end loop;
+  perform 1 from invest.course co where co.course = v_course for update;
+  update invest.course
+     set angel = v_clean,
+         -- 已經揭曉過又改得獎組別：重新揭曉（頒獎走到那一步時再公開）
+         angel_revealed = angel_revealed and v_clean = angel and jsonb_array_length(v_clean) > 0
+   where invest.course.course = v_course;
+  perform invest.apply_reveal();
+  perform invest.bump();
+  return invest.admin_overview();
+end
+$$;
+
 -- 重置某一場（彩排用）：清除投資、走勢、結果與出席紀錄，名單保留
 create or replace function public.invest_admin_reset(pw text, course text) returns jsonb
 language plpgsql volatile security definer set search_path = '' as $$
@@ -1299,7 +1354,7 @@ begin
   update invest.course
      set phase = 'pending', opened_at = null, dark_at = null, dark_ends_at = null, closed_at = null,
          dark_history_id = null, closed_from = null, dark_left_ms = null, results = null, revealed = false,
-         presenting = null, presenting_at = null, presented = '{}'::jsonb
+         presenting = null, presenting_at = null, presented = '{}'::jsonb, angel = '[]'::jsonb, angel_revealed = false
    where invest.course.course = v_course;
   perform invest.bump();
   return invest.admin_overview();
@@ -1792,7 +1847,7 @@ begin
     'invest_login(text, text)', 'invest_group_cover(text, text)', 'invest_slide_image(bigint)',
     'invest_admin_stage(text, text, integer)', 'invest_admin_group(text, text, text, text, text, boolean)',
     'invest_admin_slides(text, jsonb)', 'invest_admin_account_save(text, jsonb, boolean)', 'invest_admin_account_delete(text, text)',
-    'invest_admin_present(text, text, text)'
+    'invest_admin_present(text, text, text)', 'invest_admin_angel(text, text, jsonb)'
   ] loop
     execute format('revoke all on function public.%s from public', fn);
     select exists (select 1 from pg_roles where rolname = 'anon') into has_role;
