@@ -162,14 +162,22 @@ function PendingView({ pc, joinUrl, darkMs }: { pc: PublicCourse; joinUrl: strin
       <Sparkle class="deco-spark p1" size="5rem" color="#fff" />
       <Sparkle class="deco-spark p2" size="2.4rem" color="#000" />
       <Sparkle class="deco-spark p3" size="3.2rem" color="#fff" />
-      <div class="pending-main">
+      <div class="pending-groups">
+        {pc.groups.map((g) => (
+          <span class="group-chip" key={g.id}>
+            <GroupName id={g.id} index={idx.get(g.id) ?? 0} />
+          </span>
+        ))}
+      </div>
+      <div class="pending-head">
         <ThemeTag size="lg" />
         <div class="pending-kicker">Standby · 等待開盤</div>
-        <h1 class="pending-title">
-          <span class="display">Live Market</span>
-          <span class="pending-title-zh">用 100 萬，投你看好的組</span>
-        </h1>
-        <div class="pending-info">
+      </div>
+      <h1 class="pending-title">
+        <span class="display">Live Market</span>
+        <span class="pending-title-zh">用 100 萬，投你看好的組</span>
+      </h1>
+      <div class="pending-info">
         <ol class="pending-rules">
           {[
             '每人 100 萬，只能投別組',
@@ -184,14 +192,6 @@ function PendingView({ pc, joinUrl, darkMs }: { pc: PublicCourse; joinUrl: strin
           ))}
         </ol>
         <PayoutTable size="screen" />
-        </div>
-        <div class="pending-groups">
-          {pc.groups.map((g) => (
-            <span class="group-chip" key={g.id}>
-              <GroupName id={g.id} index={idx.get(g.id) ?? 0} />
-            </span>
-          ))}
-        </div>
       </div>
       <JoinBox joinUrl={joinUrl} big />
     </main>

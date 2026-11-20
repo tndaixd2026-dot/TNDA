@@ -4180,3 +4180,68 @@ html.screen-mode body {
   white-space: nowrap;
   font-size: clamp(2rem, 13vw, 3rem);
 }
+
+/* 未開盤大螢幕：組別小卡在左上；QR code 上緣對齊 LIVE MARKET、下緣對齊倍率表 */
+.screen-pending {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto auto;
+  grid-template-areas:
+    'groups groups'
+    '. .'
+    'head .'
+    'title join'
+    'info join';
+  column-gap: 3rem;
+  row-gap: 0;
+  align-items: start;
+  padding: 1.2rem 1rem 2rem;
+}
+.screen-pending .pending-groups {
+  grid-area: groups;
+  max-width: 64rem;
+}
+.pending-head {
+  grid-area: head;
+}
+.screen-pending .pending-title {
+  grid-area: title;
+  margin: 0;
+  padding-bottom: 1.6rem;
+}
+.screen-pending .pending-kicker {
+  margin-top: 1.4rem;
+  margin-bottom: 0.6rem;
+}
+.screen-pending .pending-info {
+  grid-area: info;
+  margin-bottom: 0;
+}
+.screen-pending .join-big {
+  grid-area: join;
+  align-self: stretch;
+  justify-content: center;
+}
+.screen-pending .pending-head {
+  margin-top: 1.4rem;
+}
+.screen-pending .p1 {
+  left: 62%;
+  top: 8%;
+}
+/* 未開盤：底部留一點空間給跑馬燈 */
+.screen-pending {
+  padding-top: 0.8rem;
+}
+.screen-pending .pending-head {
+  margin-top: 1rem;
+}
+.screen-pending .pending-kicker {
+  margin-top: 1rem;
+}
+.screen-pending .pending-title .display {
+  font-size: 6.4rem;
+}
+/* QR code 上緣對齊 LIVE MARKET 字的上緣（字框上方有一點行距） */
+.screen-pending .join-big {
+  margin-top: 1.05rem;
+}
