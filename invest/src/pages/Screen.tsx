@@ -162,13 +162,6 @@ function PendingView({ pc, joinUrl, darkMs }: { pc: PublicCourse; joinUrl: strin
       <Sparkle class="deco-spark p1" size="5rem" color="#fff" />
       <Sparkle class="deco-spark p2" size="2.4rem" color="#000" />
       <Sparkle class="deco-spark p3" size="3.2rem" color="#fff" />
-      <div class="pending-groups">
-        {pc.groups.map((g) => (
-          <span class="group-chip" key={g.id}>
-            <GroupName id={g.id} index={idx.get(g.id) ?? 0} />
-          </span>
-        ))}
-      </div>
       <div class="pending-head">
         <ThemeTag size="lg" />
         <div class="pending-kicker">Standby · 等待開盤</div>
@@ -178,6 +171,7 @@ function PendingView({ pc, joinUrl, darkMs }: { pc: PublicCourse; joinUrl: strin
         <span class="pending-title-zh">用 100 萬，投你看好的組</span>
       </h1>
       <div class="pending-info">
+        <div class="pending-left">
         <ol class="pending-rules">
           {[
             '每人 100 萬，只能投別組',
@@ -191,6 +185,14 @@ function PendingView({ pc, joinUrl, darkMs }: { pc: PublicCourse; joinUrl: strin
             </li>
           ))}
         </ol>
+        <div class="pending-groups">
+          {pc.groups.map((g) => (
+            <span class="group-chip" key={g.id}>
+              <GroupName id={g.id} index={idx.get(g.id) ?? 0} />
+            </span>
+          ))}
+        </div>
+        </div>
         <PayoutTable size="screen" />
       </div>
       <JoinBox joinUrl={joinUrl} big />
