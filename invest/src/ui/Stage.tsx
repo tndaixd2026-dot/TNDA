@@ -98,7 +98,7 @@ export function AwardsView({ scene, pub }: { scene: AwardScene; pub: PublicState
               <strong>{scene.investors}</strong> 人投資
             </span>
           </div>
-          <p class="stage-lead">從第 3 名開始 →</p>
+          <p class="stage-lead">先頒天使投資獎 →</p>
         </main>
       );
     case 'podium':

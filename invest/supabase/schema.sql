@@ -665,31 +665,27 @@ $$;
 
 -- ---------- 大螢幕舞台：頒獎與業師總結 ----------
 
--- 頒獎的每一步（依兩場的封盤結果自動產生）：開場 → 每場（開場 → 第 3、2 名 → 第 1 名一飛沖天 → 股神 → 完整排名）→ 結束
+-- 頒獎的每一步（依兩場的封盤結果自動產生）：開場 → 每場（開場 → 天使投資獎 → 一飛沖天獎 → 股神獎，只頒第 1 名）→ 結束
 create or replace function invest.award_steps() returns jsonb
 language plpgsql stable set search_path = '' as $$
 declare
   steps jsonb := jsonb_build_array(jsonb_build_object('kind', 'title', 'label', '頒獎典禮開場'));
   c text;
   cs invest.course;
-  r int;
 begin
   foreach c in array array['wed', 'thu'] loop
     select * into cs from invest.course co where co.course = c;
     if cs.phase <> 'closed' or cs.results is null then continue; end if;
-    steps := steps || jsonb_build_array(jsonb_build_object('kind', 'intro', 'course', c, 'label', invest.course_label(c) || '：開場'));
-    for r in
-      select distinct (g ->> 'rank')::int as rk from jsonb_array_elements(cs.results -> 'groups') g
-      where (g ->> 'rank')::int <= 3 order by rk desc
-    loop
-      steps := steps || jsonb_build_array(jsonb_build_object(
-        'kind', case when r = 1 then 'rocket' else 'podium' end, 'course', c, 'rank', r,
-        'label', invest.course_label(c) || case when r = 1 then '：第 1 名・一飛沖天獎' else format('：第 %s 名', r) end));
-    end loop;
+    -- 每一場只頒第 1 名：天使投資獎 → 一飛沖天獎 → 股神獎（2026-11-24 調整）
     steps := steps || jsonb_build_array(
-      jsonb_build_object('kind', 'stockgod', 'course', c, 'label', invest.course_label(c) || '：股神獎'),
-      jsonb_build_object('kind', 'angel', 'course', c, 'label', invest.course_label(c) || '：TNDA 天使投資獎'),
-      jsonb_build_object('kind', 'ranking', 'course', c, 'label', invest.course_label(c) || '：完整排名'));
+      jsonb_build_object('kind', 'intro', 'course', c, 'label', invest.course_label(c) || '：開場'),
+      jsonb_build_object('kind', 'angel', 'course', c, 'label', invest.course_label(c) || '：TNDA 天使投資獎'));
+    if exists (select 1 from jsonb_array_elements(cs.results -> 'groups') g where (g ->> 'rank')::int = 1) then
+      steps := steps || jsonb_build_array(jsonb_build_object(
+        'kind', 'rocket', 'course', c, 'rank', 1, 'label', invest.course_label(c) || '：一飛沖天獎'));
+    end if;
+    steps := steps || jsonb_build_array(
+      jsonb_build_object('kind', 'stockgod', 'course', c, 'label', invest.course_label(c) || '：股神獎'));
   end loop;
   return steps || jsonb_build_array(jsonb_build_object('kind', 'finale', 'label', '頒獎結束'));
 end
@@ -722,8 +718,6 @@ begin
     -- 還沒選得獎組別時 groups 是空的（大螢幕顯示「業師評分中」）
     v := v || jsonb_build_object('groups', coalesce((
       select jsonb_agg(jsonb_build_object('group', a.grp)
-                       || coalesce((select (g - 'deductions') from jsonb_array_elements(cs.results -> 'groups') g
-                                    where g ->> 'group' = a.grp), '{}'::jsonb)
                        || invest.group_public(c, a.grp)
                        order by invest.group_num(a.grp) nulls last)
       from jsonb_array_elements_text(cs.angel) as a(grp)), '[]'::jsonb));

@@ -986,9 +986,14 @@ describe('頒獎與業師總結（大螢幕舞台）', () => {
     const st = await stageAct('awards');
     const labels = st.stage.awardLabels;
     const i = labels.indexOf('上半場・週三：TNDA 天使投資獎');
-    expect(i).toBe(labels.indexOf('上半場・週三：股神獎') + 1);
-    expect(labels[i + 1]).toBe('上半場・週三：完整排名');
-    // 走到股神獎：天使投資獎還沒公開
+    // 每場只頒第 1 名：開場 → 天使投資獎 → 一飛沖天獎 → 股神獎
+    expect(labels.slice(i - 1, i + 3)).toEqual([
+      '上半場・週三：開場',
+      '上半場・週三：TNDA 天使投資獎',
+      '上半場・週三：一飛沖天獎',
+      '上半場・週三：股神獎',
+    ]);
+    // 走到該場開場：天使投資獎還沒公開
     await stageAct('goto', i - 1);
     expect((await state()).courses.wed.angel).toBeNull();
     // 走到天使投資獎：大螢幕顯示得獎組別的作品資訊，公開狀態也有了
@@ -1037,24 +1042,25 @@ describe('頒獎與業師總結（大螢幕舞台）', () => {
     const ov = await stageAct('awards');
     const labels = ov.stage.awardLabels;
     expect(labels[0]).toBe('頒獎典禮開場');
-    expect(labels).toContain('上半場・週三：第 1 名・一飛沖天獎');
+    expect(labels).toContain('上半場・週三：一飛沖天獎');
+    // 不頒第 2、3 名，也沒有完整排名
+    expect(labels.some((l) => /第 [23] 名|完整排名/.test(l))).toBe(false);
     expect(labels).toContain('下半場・週四：股神獎');
     expect(labels[labels.length - 1]).toBe('頒獎結束');
-    // 第 1 名之前（開場、週三第 3、2 名）都還沒公開
-    const firstWed = labels.indexOf('上半場・週三：第 1 名・一飛沖天獎');
+    // 第 1 名之前（開場、週三天使投資獎）都還沒公開
+    const firstWed = labels.indexOf('上半場・週三：一飛沖天獎');
     for (let i = 0; i < firstWed - 1; i++) await stageAct('next');
     let s = await state();
     expect(s.stage.mode).toBe('awards');
     expect(s.courses.wed.revealed).toBe(false);
     expect(s.courses.wed.results).toBeNull();
-    // 第 2 名那一步有作品資訊與組員
-    const podium = s.stage.scene as { kind: string; groups: { memberNames: string[]; slogan: string }[] };
-    expect(podium.kind).toBe('podium');
-    expect(podium.groups[0].memberNames.length).toBeGreaterThan(0);
+    expect(s.stage.scene?.kind).toBe('angel');
 
     await stageAct('next');
     s = await state();
     expect(s.stage.scene).toMatchObject({ kind: 'rocket', course: 'wed', rank: 1 });
+    // 第 1 名那一步有作品資訊與組員
+    expect((s.stage.scene as { groups: { memberNames: string[] }[] }).groups[0].memberNames.length).toBeGreaterThan(0);
     expect(s.courses.wed.revealed).toBe(true);
     expect(s.courses.thu.revealed).toBe(false);
     expect((await me('甲')).courses.wed?.result?.rank).toBeGreaterThan(0);
