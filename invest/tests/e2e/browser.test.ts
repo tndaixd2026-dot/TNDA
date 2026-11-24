@@ -313,7 +313,7 @@ describe('瀏覽器實測：學生下單 → 大螢幕', () => {
     const goto = (label: string) => admin('invest_admin_stage', { action: 'goto', step: labels.indexOf(label) });
     // 第 1 名揭曉前，手機還看不到報酬
     await expect(phone.locator('.result-card').count()).resolves.toBe(0);
-    await goto('上半場・週三：第 1 名・一飛沖天獎');
+    await goto('上半場・週三：一飛沖天獎');
     await screen.locator('.drumroll').waitFor({ timeout: 3000 });
     await screen.getByText('一飛沖天獎', { exact: true }).waitFor({ timeout: 6000 });
     await screen.locator('.stage-first .showcase-slogan').waitFor();
@@ -324,15 +324,15 @@ describe('瀏覽器實測：學生下單 → 大螢幕', () => {
     await phone.getByText('45 萬沒投完').waitFor();
     await goto('上半場・週三：股神獎');
     await screen.getByText('股神獎', { exact: true }).waitFor({ timeout: 3000 });
-    await goto('上半場・週三：完整排名');
+
+    // 回到盤況畫面：已揭曉，顯示完整排行；排行榜只列各組金額，不列學生姓名
+    await adminPage.getByRole('button', { name: '盤況畫面' }).click();
     await screen.locator('.final-table').waitFor({ timeout: 3000 });
-    // 排行榜只列各組金額，不列學生姓名
     const table = await screen.locator('.final-table').innerText();
     expect(table).toContain('−45');
     expect(table).not.toContain('王小明');
 
-    // 回到盤況畫面，管理員按「取消封盤」：倒數已結束，所以回到開盤中；大螢幕回到走勢與排行，學生又能下單
-    await adminPage.getByRole('button', { name: '盤況畫面' }).click();
+    // 管理員按「取消封盤」：倒數已結束，所以回到開盤中；大螢幕回到走勢與排行，學生又能下單
     await adminPage.getByRole('button', { name: '取消封盤' }).click();
     await screen.getByText('目前排行').waitFor({ timeout: 2000 });
     await expect(boardTotal(screen, '第2組')).resolves.toBe('50萬');
